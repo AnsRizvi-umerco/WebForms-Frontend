@@ -1,0 +1,429 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-body: "Lexend Deca", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
+    "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  --font-heading: "Montserrat", sans-serif;
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+body {
+  @apply bg-umerco-canvas text-umerco-dark font-sans;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-heading);
+  font-weight: 700;
+}
+
+.container-page {
+  @apply mx-auto w-full min-w-0 max-w-7xl px-4 py-6;
+}
+
+@layer components {
+  .umerco-section-label {
+    font-family: var(--font-heading);
+    @apply text-xs font-semibold uppercase tracking-section text-umerco-muted;
+  }
+
+  .umerco-hairline {
+    @apply border-umerco-border;
+  }
+
+  .umerco-input {
+    @apply w-full rounded-lg border border-umerco-border bg-umerco-white px-3 py-2 text-umerco-dark shadow-sm;
+  }
+
+  .umerco-input-readonly {
+    @apply w-full rounded-lg border border-umerco-border bg-umerco-canvas px-3 py-2 text-sm text-umerco-dark;
+  }
+
+  .umerco-panel {
+    @apply smoke-card rounded-xl p-5;
+  }
+
+  /* Lucid-style floating white cards */
+  .smoke-card {
+    border-radius: 0.75rem;
+    background-color: #ffffff;
+    border: 1px solid rgb(255 255 255 / 0.65);
+    box-shadow:
+      0 1px 2px rgb(17 24 39 / 0.03),
+      0 4px 16px rgb(17 24 39 / 0.05),
+      0 16px 48px rgb(240 242 245 / 0.95);
+  }
+
+  .auth-form-card {
+    border-radius: 1rem;
+    background-color: #ffffff;
+    border: 1px solid rgb(255 255 255 / 0.65);
+    box-shadow:
+      0 1px 2px rgb(17 24 39 / 0.03),
+      0 4px 16px rgb(17 24 39 / 0.05),
+      0 16px 48px rgb(240 242 245 / 0.95);
+  }
+
+  .umerco-table-head-row {
+    @apply bg-umerco-canvas text-xs uppercase tracking-wider text-umerco-muted;
+  }
+
+  .login-grid {
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  .login-brand-panel {
+    background-color: #1a1d21;
+    color: #f9fafb;
+  }
+
+  .login-brand-title {
+    color: #ffffff;
+  }
+
+  .login-submit-btn,
+  .btn-primary-lg,
+  button.btn-primary-lg,
+  a.btn-primary-lg {
+    background-color: #2563eb;
+    color: #ffffff;
+  }
+
+  .login-submit-btn:hover:not(:disabled),
+  .btn-primary-lg:hover:not(:disabled),
+  button.btn-primary-lg:hover:not(:disabled),
+  a.btn-primary-lg:hover {
+    background-color: #1d4ed8;
+  }
+
+  .language-toggle-active,
+  button.language-toggle-active {
+    background-color: #2563eb;
+    color: #ffffff;
+  }
+
+  .language-toggle-inactive,
+  button.language-toggle-inactive {
+    color: #6b7280;
+  }
+
+  .language-toggle-inactive:hover,
+  button.language-toggle-inactive:hover {
+    background-color: #f9fafb;
+    color: #111827;
+  }
+
+  /* Portal shell */
+  .portal-sidebar {
+    background-color: #1a1d21;
+    color: #f9fafb;
+  }
+
+  .portal-sidebar-brand {
+    background-color: #2563eb;
+    color: #ffffff;
+  }
+
+  .portal-nav-link,
+  button.portal-nav-link {
+    color: #9ca3af;
+  }
+
+  .portal-nav-link:hover,
+  button.portal-nav-link:hover {
+    background-color: rgb(255 255 255 / 0.05);
+    color: #ffffff;
+  }
+
+  .portal-nav-link-active,
+  button.portal-nav-link-active {
+    background-color: #2563eb;
+    color: #ffffff;
+  }
+
+  /* Buttons — compound selectors beat Tailwind preflight on <button> */
+  .btn-primary,
+  button.btn-primary,
+  a.btn-primary {
+    background-color: #2563eb;
+    color: #ffffff;
+  }
+
+  .btn-primary:hover:not(:disabled),
+  button.btn-primary:hover:not(:disabled),
+  a.btn-primary:hover {
+    background-color: #1d4ed8;
+  }
+
+  .btn-secondary,
+  button.btn-secondary,
+  a.btn-secondary {
+    background-color: #ffffff;
+    border-color: #e8eaed;
+    color: #1a1d21;
+  }
+
+  .btn-secondary:hover:not(:disabled),
+  button.btn-secondary:hover:not(:disabled),
+  a.btn-secondary:hover {
+    background-color: #f4f5f7;
+  }
+
+  .btn-outline,
+  button.btn-outline,
+  a.btn-outline {
+    background-color: #ffffff;
+    border-color: #e8eaed;
+    color: #1a1d21;
+  }
+
+  .btn-outline:hover,
+  button.btn-outline:hover:not(:disabled),
+  a.btn-outline:hover {
+    background-color: #f4f5f7;
+  }
+
+  .btn-dark,
+  button.btn-dark,
+  a.btn-dark {
+    background-color: #1a1d21;
+    color: #ffffff;
+  }
+
+  .btn-dark:hover:not(:disabled),
+  button.btn-dark:hover:not(:disabled),
+  a.btn-dark:hover {
+    background-color: #111827;
+  }
+
+  .portal-card,
+  .schedule-panel,
+  .schedule-stat {
+    border-radius: 0.75rem;
+    background-color: #ffffff;
+    border: 1px solid rgb(255 255 255 / 0.65);
+    box-shadow:
+      0 1px 2px rgb(17 24 39 / 0.03),
+      0 4px 16px rgb(17 24 39 / 0.05),
+      0 16px 48px rgb(240 242 245 / 0.95);
+  }
+
+  .table-header-dark {
+    background-color: #1a1d21;
+    color: #ffffff;
+  }
+
+  .surface-dark {
+    background-color: #1a1d21;
+    color: #f9fafb;
+  }
+
+  .status-pill-pending {
+    background-color: #f4f5f7;
+    color: #6b7280;
+  }
+
+  .status-pill-acknowledged {
+    background-color: #eff6ff;
+    color: #2563eb;
+  }
+
+  .status-pill-completed {
+    background-color: #ecfdf5;
+    color: #059669;
+  }
+
+  .toggle-track-on,
+  button.toggle-track-on {
+    background-color: #1a1d21;
+  }
+
+  .toggle-track-off,
+  button.toggle-track-off {
+    background-color: #e8eaed;
+  }
+
+  .step-badge-active {
+    background-color: #2563eb;
+    color: #ffffff;
+  }
+
+  .schedule-card {
+    border-radius: 0.75rem;
+    background-color: #ffffff;
+    border: 1px solid rgb(255 255 255 / 0.65);
+    box-shadow:
+      0 1px 2px rgb(17 24 39 / 0.03),
+      0 4px 16px rgb(17 24 39 / 0.05),
+      0 16px 48px rgb(240 242 245 / 0.95);
+    transition: box-shadow 0.2s ease;
+  }
+
+  .schedule-card:hover {
+    box-shadow:
+      0 2px 4px rgb(17 24 39 / 0.04),
+      0 8px 24px rgb(17 24 39 / 0.07),
+      0 20px 56px rgb(240 242 245 / 1);
+  }
+
+  .schedule-card-expanded {
+    box-shadow:
+      0 4px 8px rgb(37 99 235 / 0.06),
+      0 12px 32px rgb(37 99 235 / 0.08),
+      0 24px 64px rgb(240 242 245 / 1);
+  }
+
+  .pagination-page-active,
+  button.pagination-page-active {
+    background-color: #2563eb;
+    color: #ffffff;
+  }
+
+  .portal-top-header {
+    background-color: #111418;
+    border-bottom: 1px solid rgb(255 255 255 / 0.08);
+    color: #f9fafb;
+  }
+
+  .portal-top-icon-btn,
+  button.portal-top-icon-btn {
+    display: inline-flex;
+    height: 2.25rem;
+    width: 2.25rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.5rem;
+    border: 1px solid rgb(255 255 255 / 0.1);
+    background-color: rgb(255 255 255 / 0.04);
+    color: #e5e7eb;
+    transition: background-color 0.15s ease;
+  }
+
+  .portal-top-icon-btn:hover,
+  button.portal-top-icon-btn:hover {
+    background-color: rgb(255 255 255 / 0.08);
+  }
+
+  .portal-top-menu-btn-open,
+  button.portal-top-menu-btn-open {
+    background-color: rgb(37 99 235 / 0.2);
+    border-color: rgb(37 99 235 / 0.35);
+    color: #ffffff;
+  }
+
+  .portal-top-lang-btn,
+  button.portal-top-lang-btn {
+    display: inline-flex;
+    height: 2.25rem;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: 0.5rem;
+    border: 1px solid rgb(255 255 255 / 0.1);
+    background-color: rgb(255 255 255 / 0.04);
+    padding: 0 0.75rem;
+    transition: background-color 0.15s ease;
+  }
+
+  .portal-top-lang-btn:hover,
+  button.portal-top-lang-btn:hover {
+    background-color: rgb(255 255 255 / 0.08);
+  }
+
+  .portal-top-profile-btn,
+  button.portal-top-profile-btn {
+    display: inline-flex;
+    max-width: 18rem;
+    align-items: center;
+    gap: 0.75rem;
+    border-radius: 0.5rem;
+    padding: 0.25rem 0.5rem 0.25rem 0.25rem;
+    transition: background-color 0.15s ease;
+  }
+
+  .portal-top-profile-btn:hover,
+  button.portal-top-profile-btn:hover {
+    background-color: rgb(255 255 255 / 0.06);
+  }
+
+  .portal-top-avatar {
+    display: inline-flex;
+    height: 2rem;
+    width: 2rem;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.5rem;
+    background-color: rgb(255 255 255 / 0.1);
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #f9fafb;
+  }
+
+  .portal-top-notification-badge {
+    position: absolute;
+    top: -0.25rem;
+    right: -0.25rem;
+    display: inline-flex;
+    min-width: 1rem;
+    height: 1rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    background-color: #ef4444;
+    padding: 0 0.25rem;
+    font-size: 10px;
+    font-weight: 600;
+    color: #ffffff;
+  }
+
+  .portal-top-dropdown {
+    border-radius: 0.75rem;
+    border: 1px solid #e8eaed;
+    background-color: #ffffff;
+    box-shadow:
+      0 4px 16px rgb(17 24 39 / 0.08),
+      0 16px 48px rgb(240 242 245 / 0.95);
+  }
+
+  .portal-top-dropdown-item {
+    padding: 0.625rem 0.875rem;
+    text-align: left;
+    font-size: 0.875rem;
+    color: #1a1d21;
+    transition: background-color 0.15s ease;
+  }
+
+  .portal-top-dropdown-item:hover {
+    background-color: #f4f5f7;
+  }
+
+  .portal-top-dropdown-item-active {
+    background-color: #eff6ff;
+    color: #2563eb;
+    font-weight: 500;
+  }
+
+  .toast-item {
+    border-radius: 0.75rem;
+    background-color: #ffffff;
+    border: 1px solid rgb(255 255 255 / 0.65);
+    box-shadow:
+      0 1px 2px rgb(17 24 39 / 0.03),
+      0 4px 16px rgb(17 24 39 / 0.05),
+      0 16px 48px rgb(240 242 245 / 0.95);
+  }
+}

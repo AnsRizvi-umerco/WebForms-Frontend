@@ -1,0 +1,60 @@
+.loader {
+  width: 50px;
+  aspect-ratio: 1;
+  --loader-color: #111827;
+  --c: no-repeat radial-gradient(farthest-side, var(--loader-color) 92%, #0000);
+  background:
+    var(--c) 50% 0,
+    var(--c) 50% 100%,
+    var(--c) 100% 50%,
+    var(--c) 0 50%;
+  background-size: 10px 10px;
+  animation: umerco-loader-spin 1s infinite;
+  position: relative;
+}
+
+.loader-light {
+  --loader-color: #faf8f5;
+}
+
+.loader::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: 3px;
+  background: repeating-conic-gradient(#0000 0 35deg, var(--loader-color) 0 90deg);
+  -webkit-mask: radial-gradient(farthest-side, #0000 calc(100% - 3px), #000 0);
+  border-radius: 50%;
+}
+
+.loader-ring {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  animation: umerco-loader-ring 0.65s linear infinite;
+}
+
+.loader-ring-dark {
+  border-color: rgba(17, 24, 39, 0.15);
+  border-top-color: #111827;
+}
+
+.loader-ring-light {
+  border-color: rgba(250, 248, 245, 0.25);
+  border-top-color: #faf8f5;
+}
+
+@keyframes umerco-loader-spin {
+  100% {
+    transform: rotate(0.5turn);
+  }
+}
+
+@keyframes umerco-loader-ring {
+  100% {
+    transform: rotate(360deg);
+  }
+}

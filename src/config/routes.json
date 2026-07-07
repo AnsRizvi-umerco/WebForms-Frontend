@@ -1,0 +1,19 @@
+{
+  "schedules": {
+    "list": "/schedules",
+    "byId": "/schedules/:scheduleId"
+  },
+  "submissions": {
+    "submit": "/submit",
+    "list": "/submissions"
+  },
+  "dashboard": "/dashboard",
+  "profile": "/profile",
+  "settings": {
+    "root": "/settings",
+    "tradingPartners": "/settings/trading-partners",
+    "integrationStatus": "/settings/integration-status"
+  },
+  "edifact": "/edifact",
+  "labels": "/labels"
+}

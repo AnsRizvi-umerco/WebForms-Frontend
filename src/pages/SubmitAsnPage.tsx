@@ -1,0 +1,618 @@
+
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { LoadingBlock } from "@/components/umerco/LoadingBlock";
+import { btnDark, tableHeader } from "@/components/umerco/styles";
+import { useToastMessage } from "@/hooks/useToastMessage";
+import { SubmitRequestResponsePanel } from "@/components/forms/SubmitRequestResponsePanel";
+import { useDocumentSubmit } from "@/components/forms/useDocumentSubmit";
+import { toCompactYyyymmdd } from "@/lib/dates/compact";
+import { apiRoutes, http } from "@/api";
+import { ScheduleFacilityFields } from "@/components/forms/ScheduleFacilityFields";
+import { primaryFacilityFromLines, uniqueFacilitiesFromLines } from "@/lib/facilities";
+import { resolveBuyerDisplayName, type SchedulePrefillMessage } from "@/lib/trading-partners";
+
+type AsnLine = {
+  poNumber: string;
+  poLine: string;
+  partNo: string;
+  description: string;
+  qtyShipped: number;
+  uom: string;
+  containerType: string;
+};
+
+type ScheduleLinePrefill = {
+  part_no: string;
+  description: string | null;
+  qty_required: number;
+  uom: string;
+  deliver_by: string;
+  facility: string;
+};
+
+type SchedulePrefillResponse = {
+  schedule: {
+    id: string;
+    deljit_ref: string;
+    trading_partner?: string | null;
+  } | null;
+  message: SchedulePrefillMessage | null;
+  lines: ScheduleLinePrefill[];
+  error?: string;
+};
+
+type SettingsDefaults = {
+  default_facility: string | null;
+  default_uom: string | null;
+  default_transport_mode: string | null;
+  default_carrier: string | null;
+};
+
+function isBlank(value: string | null | undefined): boolean {
+  return value == null || value.trim() === "";
+}
+
+const EMPTY_ASN_LINE: AsnLine = {
+  poNumber: "",
+  poLine: "001",
+  partNo: "",
+  description: "",
+  qtyShipped: 0,
+  uom: "EA",
+  containerType: "PALLET"
+};
+
+/** Deterministic stand-in when no buyer PO exists in data (traceable for support / logs). */
+function poPlaceholder(anchorRef: string, lineIndex: number): string {
+  const safe = anchorRef
+    .replace(/\s+/g, "_")
+    .replace(/[^a-zA-Z0-9._-]/g, "")
+    .slice(0, 48) || "REF";
+  return `PO-PENDING-${safe}-L${String(lineIndex + 1).padStart(3, "0")}`;
+}
+
+const TRANSPORT_MODES = ["TRUCK", "AIR", "SEA", "RAIL"];
+const UOM_OPTIONS = ["EA", "KG", "LB", "M", "FT", "L", "GAL", "PCS", "SET"];
+const CONTAINER_OPTIONS = ["PALLET", "CRATE", "BOX"];
+const PACKAGE_TYPES = ["PALLET", "CARTON", "CRATE", "TOTE"];
+
+export default function SubmitAsnPage() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const scheduleId = searchParams.get("schedule");
+  const requiresSchedulePrefill = Boolean(scheduleId);
+  const { pending, result, lastRequest, submit } = useDocumentSubmit();
+  const userEditedRef = useRef(false);
+  const appliedScheduleIdRef = useRef<string | null>(null);
+  const appliedSettingsRef = useRef(false);
+  const [form, setForm] = useState({
+    supplierName: "XYZ Parts International Ltd.",
+    tradingPartner: "",
+    buyerCompanyName: "",
+    asnRef: `ASN-${new Date().getFullYear()}-0001`,
+    shipDate: "",
+    shipTime: "10:00",
+    transportMode: "",
+    carrier: "",
+    trackingNo: "",
+    bolNumber: "",
+    shipToFacility: "",
+    packageCount: 1,
+    packageType: "PALLET",
+    grossWeight: 0,
+    netWeight: 0,
+    notes: "",
+    supplierCode: "XYZ-PARTS"
+  });
+  const [lines, setLines] = useState<AsnLine[]>(() =>
+    requiresSchedulePrefill
+      ? []
+      : [
+          {
+            poNumber: "PO-84201",
+            poLine: "001",
+            partNo: "LC-BATT-4680",
+            description: "Battery Cell Module",
+            qtyShipped: 250,
+            uom: "EA",
+            containerType: "PALLET"
+          }
+        ]
+  );
+  const [scheduleFacilities, setScheduleFacilities] = useState<string[]>([]);
+  const [prefillLoading, setPrefillLoading] = useState(requiresSchedulePrefill);
+  const [prefillError, setPrefillError] = useState<string | null>(null);
+  const [prefillWarning, setPrefillWarning] = useState<string | null>(null);
+  const isSchedulePrefillLocked = requiresSchedulePrefill && prefillLoading;
+
+  useToastMessage(prefillError, "error");
+  useToastMessage(prefillWarning, "warning");
+
+  const payload = useMemo(() => {
+    const pkg = Math.max(1, Math.floor(Number(form.packageCount)) || 1);
+    const gw = Number(form.grossWeight);
+    const nw = Number(form.netWeight);
+    return {
+      supplierName: form.supplierName,
+      buyerCompanyName: form.buyerCompanyName,
+      asnRef: form.asnRef,
+      shipDate: toCompactYyyymmdd(form.shipDate),
+      shipTime: form.shipTime,
+      transportMode: form.transportMode,
+      carrier: form.carrier,
+      trackingNo: form.trackingNo.trim() || "NO-TRACKING-YET",
+      bolNumber: form.bolNumber.trim() || "NO-BOL-YET",
+      shipToFacility: form.shipToFacility,
+      packageCount: String(pkg),
+      packageType: form.packageType,
+      grossWeight: (Number.isFinite(gw) ? gw : 0).toString(),
+      netWeight: (Number.isFinite(nw) ? nw : 0).toString(),
+      notes: form.notes,
+      lines: lines.map((line, idx) => ({
+        poNumber: line.poNumber.trim() || poPlaceholder(form.asnRef.trim() || "ASN", idx),
+        poLine: line.poLine,
+        partNo: line.partNo,
+        description: line.description.trim() || line.partNo.trim() || "Item",
+        qtyShipped: String(Math.max(0, Math.floor(Number(line.qtyShipped)) || 0)),
+        uom: line.uom,
+        containerType: line.containerType
+      }))
+    };
+  }, [form, lines]);
+
+  const onSubmit = async () => {
+    await submit({
+      messageType: "DESADV",
+      supplierCode: form.supplierCode,
+      tradingPartner: form.tradingPartner,
+      payload
+    });
+  };
+
+  const missingRequired =
+    !form.tradingPartner.trim() ||
+    !form.shipToFacility.trim() ||
+    !form.asnRef.trim() ||
+    !form.shipDate.trim() ||
+    Number(form.packageCount) < 1 ||
+    lines.length === 0 ||
+    lines.some((line) => !line.partNo.trim() || Number(line.qtyShipped) <= 0);
+
+  const updateForm = (key: keyof typeof form, value: string) => {
+    userEditedRef.current = true;
+    setForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const updateLine = <K extends keyof AsnLine>(idx: number, key: K, value: AsnLine[K]) => {
+    userEditedRef.current = true;
+    setLines((prev) => prev.map((line, i) => (i === idx ? { ...line, [key]: value } : line)));
+  };
+
+  useEffect(() => {
+    if (appliedSettingsRef.current) return;
+
+    let cancelled = false;
+
+    const fetchSettingsDefaults = async () => {
+      try {
+        const response = await http.get(apiRoutes.settings.root);
+        if (cancelled || !response.ok) return;
+
+        const settings = (await response.json()) as SettingsDefaults;
+        if (cancelled) return;
+
+        if (userEditedRef.current) return;
+
+        appliedSettingsRef.current = true;
+
+        setForm((prev) => ({
+          ...prev,
+          ...(isBlank(prev.shipToFacility) && !isBlank(settings.default_facility)
+            ? { shipToFacility: settings.default_facility!.trim() }
+            : {}),
+          ...(isBlank(prev.transportMode) && !isBlank(settings.default_transport_mode)
+            ? { transportMode: settings.default_transport_mode!.trim() }
+            : {}),
+          ...(isBlank(prev.carrier) && !isBlank(settings.default_carrier)
+            ? { carrier: settings.default_carrier!.trim() }
+            : {})
+        }));
+
+        setLines((prev) =>
+          !isBlank(settings.default_uom)
+            ? prev.map((line) =>
+                isBlank(line.uom) ? { ...line, uom: settings.default_uom!.trim() } : line
+              )
+            : prev
+        );
+      } catch {
+        // Fail silently — form keeps empty/demo initial state
+      }
+    };
+
+    fetchSettingsDefaults();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!scheduleId) return;
+    if (appliedScheduleIdRef.current === scheduleId) return;
+
+    let cancelled = false;
+    setPrefillLoading(true);
+    setPrefillError(null);
+    setPrefillWarning(null);
+
+    const fetchSchedulePrefill = async () => {
+      try {
+        const response = await http.get(apiRoutes.schedules.byId(scheduleId));
+        const json = (await response.json()) as SchedulePrefillResponse;
+        if (cancelled) return;
+
+        const schedule = json.schedule;
+        if (!response.ok || !schedule) {
+          setPrefillError("Could not load selected schedule details for ASN prefill.");
+          return;
+        }
+
+        if (userEditedRef.current) {
+          setPrefillWarning("Schedule prefill was skipped because you already started editing this ASN.");
+          return;
+        }
+
+        const deljitRef = schedule.deljit_ref;
+        const nextLines = json.lines.map((line, index) => ({
+          poNumber: poPlaceholder(deljitRef, index),
+          poLine: String(index + 1).padStart(3, "0"),
+          partNo: line.part_no,
+          description: line.description?.trim() || line.part_no,
+          qtyShipped: line.qty_required,
+          uom: line.uom,
+          containerType: "PALLET"
+        }));
+
+        const facilities = uniqueFacilitiesFromLines(json.lines);
+        const partner =
+          json.message?.tradingPartner ?? json.schedule?.trading_partner ?? "";
+        setScheduleFacilities(facilities);
+        setForm((prev) => ({
+          ...prev,
+          tradingPartner: partner,
+          buyerCompanyName: partner ? resolveBuyerDisplayName(partner) : prev.buyerCompanyName,
+          shipToFacility: primaryFacilityFromLines(json.lines)
+        }));
+        setLines(nextLines.length > 0 ? nextLines : [EMPTY_ASN_LINE]);
+        if (nextLines.length === 0) {
+          setPrefillWarning("Selected schedule has no lines. Add ASN lines manually.");
+        }
+
+        appliedScheduleIdRef.current = scheduleId;
+      } catch {
+        if (!cancelled) {
+          setPrefillError("Could not load selected schedule details for ASN prefill.");
+        }
+      } finally {
+        if (!cancelled) {
+          setPrefillLoading(false);
+        }
+      }
+    };
+
+    fetchSchedulePrefill();
+    return () => {
+      cancelled = true;
+    };
+  }, [scheduleId]);
+
+  return (
+    <div className="mx-auto max-w-6xl space-y-6 py-6">
+        <button
+          type="button"
+          onClick={() => navigate("/schedules")}
+          className="inline-flex items-center gap-2 rounded-lg border border-umerco-border bg-umerco-white px-3 py-2 text-sm font-medium text-umerco-dark hover:bg-umerco-beige inline-flex items-center gap-2"
+        >
+          <span aria-hidden>←</span>
+          Back to Schedules
+        </button>
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-umerco-dark">Submit ASN</h1>
+            <p className="mt-1 text-sm text-umerco-muted">
+              Prepare an advanced ship notice with shipment, transport, and package details
+            </p>
+          </div>
+          <span className="rounded-full bg-umerco-tan px-3 py-1 text-xs font-medium text-umerco-dark">
+            Draft
+          </span>
+        </div>
+        {prefillLoading ? (
+          <LoadingBlock variant="banner" message="Loading selected schedule line items…" />
+        ) : null}
+        {!scheduleId ? (
+          <div className="rounded-md border border-umerco-border bg-umerco-tan/40 px-4 py-3 text-sm text-umerco-dark">
+            Open this form from a delivery schedule to load the trading partner and line items.
+          </div>
+        ) : null}
+        {requiresSchedulePrefill && !prefillLoading && !form.tradingPartner.trim() && !prefillError ? (
+          <div className="rounded-md border border-umerco-border bg-umerco-beige px-4 py-3 text-sm text-umerco-dark">
+            Trading partner could not be loaded from the selected schedule.
+          </div>
+        ) : null}
+        {requiresSchedulePrefill && !prefillLoading && !form.shipToFacility.trim() && !prefillError ? (
+          <div className="rounded-md border border-umerco-border bg-umerco-beige px-4 py-3 text-sm text-umerco-dark">
+            Ship-to facility could not be loaded from the selected schedule.
+          </div>
+        ) : null}
+
+        <fieldset
+          disabled={isSchedulePrefillLocked}
+          className={isSchedulePrefillLocked ? "pointer-events-none opacity-60" : undefined}
+        >
+
+        <div className="grid gap-6 md:grid-cols-2">
+          <div className="rounded-lg border border-umerco-border bg-umerco-white p-5">
+            <p className="umerco-section-label">
+              From — Supplier
+            </p>
+            <div className="mt-4 grid gap-3">
+              <input
+                className="umerco-input text-sm"
+                value={form.supplierName}
+                onChange={(e) => updateForm("supplierName", e.target.value)}
+              />
+              <input
+                className="umerco-input text-sm"
+                value={form.supplierCode}
+                onChange={(e) => updateForm("supplierCode", e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="rounded-lg border border-umerco-border bg-umerco-white p-5">
+            <p className="umerco-section-label">
+              To — Buyer
+            </p>
+            <div className="mt-4 grid gap-3">
+              <input
+                className="umerco-input-readonly"
+                value={form.buyerCompanyName}
+                readOnly
+              />
+              <ScheduleFacilityFields
+                primaryFacility={form.shipToFacility}
+                allFacilities={scheduleFacilities}
+              />
+              <div className="rounded-md border border-dashed border-umerco-border bg-umerco-canvas px-3 py-2 text-xs text-umerco-muted">
+                Trading Partner:{" "}
+                <span className="font-mono text-umerco-dark">{form.tradingPartner || "—"}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-umerco-border bg-umerco-white p-5">
+          <h2 className="mb-4 umerco-section-label">
+            Shipment Identity
+          </h2>
+          <div className="grid gap-4 md:grid-cols-4">
+            <input
+              className="umerco-input text-sm"
+              value={form.asnRef}
+              onChange={(e) => updateForm("asnRef", e.target.value)}
+              placeholder="ASN Reference *"
+            />
+            <input
+              type="date"
+              className="umerco-input text-sm"
+              value={form.shipDate}
+              onChange={(e) => updateForm("shipDate", e.target.value)}
+            />
+            <input
+              type="time"
+              className="umerco-input text-sm"
+              value={form.shipTime}
+              onChange={(e) => updateForm("shipTime", e.target.value)}
+            />
+            <select
+              className="umerco-input text-sm"
+              value={form.transportMode}
+              onChange={(e) => updateForm("transportMode", e.target.value)}
+            >
+              <option value="">— Select —</option>
+              {TRANSPORT_MODES.map((mode) => (
+                <option key={mode} value={mode}>
+                  {mode}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-umerco-border bg-umerco-white p-5">
+          <h2 className="mb-4 umerco-section-label">
+            Transport Details
+          </h2>
+          <div className="grid gap-4 md:grid-cols-3">
+            <input
+              className="umerco-input text-sm"
+              value={form.carrier}
+              onChange={(e) => updateForm("carrier", e.target.value)}
+              placeholder="Carrier"
+            />
+            <input
+              className="umerco-input text-sm"
+              value={form.trackingNo}
+              onChange={(e) => updateForm("trackingNo", e.target.value)}
+              placeholder="Tracking Number"
+            />
+            <input
+              className="umerco-input text-sm"
+              value={form.bolNumber}
+              onChange={(e) => updateForm("bolNumber", e.target.value)}
+              placeholder="Bill of Lading"
+            />
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-umerco-border bg-umerco-white p-5">
+          <h2 className="mb-4 umerco-section-label">
+            Packaging Details
+          </h2>
+          <div className="grid gap-4 md:grid-cols-4">
+            <input
+              type="number"
+              min={1}
+              className="umerco-input text-sm"
+              value={form.packageCount}
+              onChange={(e) => updateForm("packageCount", e.target.value)}
+              placeholder="Package Count"
+            />
+            <select
+              className="umerco-input text-sm"
+              value={form.packageType}
+              onChange={(e) => updateForm("packageType", e.target.value)}
+            >
+              {PACKAGE_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min={0}
+              className="umerco-input text-sm"
+              value={form.grossWeight}
+              onChange={(e) => updateForm("grossWeight", e.target.value)}
+              placeholder="Gross Weight"
+            />
+            <input
+              type="number"
+              min={0}
+              className="umerco-input text-sm"
+              value={form.netWeight}
+              onChange={(e) => updateForm("netWeight", e.target.value)}
+              placeholder="Net Weight"
+            />
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-umerco-border bg-umerco-white p-5">
+          <h2 className="mb-4 umerco-section-label">
+            Line Items
+          </h2>
+          <div className="overflow-x-auto rounded-md border border-umerco-border">
+            {isSchedulePrefillLocked ? (
+              <LoadingBlock message="Loading line items from schedule…" />
+            ) : (
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className={tableHeader}>
+                  <th className="px-3 py-2">PO #</th>
+                  <th className="px-3 py-2">PO Line</th>
+                  <th className="px-3 py-2">Part #</th>
+                  <th className="px-3 py-2">Description</th>
+                  <th className="px-3 py-2 text-right">Qty Shipped</th>
+                  <th className="px-3 py-2">UOM</th>
+                  <th className="px-3 py-2">Container</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-umerco-border">
+                {lines.map((line, idx) => (
+                  <tr key={`${line.poLine}-${idx}`} className="hover:bg-umerco-beige">
+                    <td className="px-3 py-2 font-mono text-xs text-umerco-muted">{line.poNumber}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-umerco-muted">{line.poLine}</td>
+                    <td className="px-3 py-2">
+                      <input
+                        className="w-full rounded border border-umerco-border px-2 py-1"
+                        value={line.partNo}
+                        onChange={(e) => updateLine(idx, "partNo", e.target.value)}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        className="w-full rounded border border-umerco-border px-2 py-1"
+                        value={line.description}
+                        onChange={(e) => updateLine(idx, "description", e.target.value)}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        type="number"
+                        min={0}
+                        className="w-28 rounded border border-umerco-border px-2 py-1 text-right"
+                        value={line.qtyShipped}
+                        onChange={(e) => updateLine(idx, "qtyShipped", Number(e.target.value))}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <select
+                        className="rounded border border-umerco-border bg-umerco-white px-2 py-1"
+                        value={line.uom}
+                        onChange={(e) => updateLine(idx, "uom", e.target.value)}
+                      >
+                        {UOM_OPTIONS.map((uom) => (
+                          <option key={uom} value={uom}>
+                            {uom}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-3 py-2">
+                      <select
+                        className="rounded border border-umerco-border bg-umerco-white px-2 py-1"
+                        value={line.containerType}
+                        onChange={(e) => updateLine(idx, "containerType", e.target.value)}
+                      >
+                        {CONTAINER_OPTIONS.map((container) => (
+                          <option key={container} value={container}>
+                            {container}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            )}
+          </div>
+          <div className="mt-4 rounded-md border border-umerco-border bg-umerco-canvas px-3 py-2 text-xs text-umerco-dark">
+            AIAG B-10 labels will auto-generate per line item on submission.
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-umerco-border bg-umerco-white p-5">
+          <label className="mb-2 block umerco-section-label">
+            Additional Notes
+          </label>
+          <textarea
+            rows={3}
+            className="w-full umerco-input text-sm"
+            value={form.notes}
+            onChange={(e) => updateForm("notes", e.target.value)}
+            placeholder="Special shipment handling instructions"
+          />
+        </div>
+
+        <div className="flex items-center justify-between rounded-lg border border-umerco-border bg-umerco-white p-4">
+          <div className="text-xs text-umerco-muted">
+            Ship date, package count, and positive shipped quantity are required.
+          </div>
+          <button
+            className={btnDark}
+            disabled={pending || missingRequired || isSchedulePrefillLocked}
+            onClick={onSubmit}
+          >
+            {pending ? "Submitting..." : "Submit ASN"}
+          </button>
+        </div>
+        </fieldset>
+
+        <SubmitRequestResponsePanel lastRequest={lastRequest} result={result} />
+      </div>
+  );
+}
