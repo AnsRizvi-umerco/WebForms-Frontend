@@ -7,6 +7,8 @@ import {
   CalendarClock,
   FileCode2,
   LayoutDashboard,
+  MessagesSquare,
+  ShieldCheck,
   Tag,
   type LucideIcon
 } from "lucide-react";
@@ -69,7 +71,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     { href: paths.dashboard, labelKey: "nav.dashboard", icon: LayoutDashboard },
     { href: paths.schedules, labelKey: "nav.schedulesShort", icon: CalendarClock },
     { href: paths.labels, labelKey: "nav.labels", icon: Tag },
-    { href: paths.edifact, labelKey: "nav.edifact", icon: FileCode2 }
+    { href: paths.edifact, labelKey: "nav.edifact", icon: FileCode2 },
+    { href: paths.compliance, labelKey: "nav.compliance", icon: ShieldCheck },
+    { href: paths.messageHub, labelKey: "nav.messageHub", icon: MessagesSquare }
   ];
 
   return (
