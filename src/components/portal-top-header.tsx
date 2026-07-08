@@ -12,6 +12,7 @@ import {
   UserCircle
 } from "lucide-react";
 import { apiRoutes, http } from "@/api";
+import { NotificationPopup, notificationUnreadCount } from "@/components/NotificationPopup";
 import { paths } from "@/paths";
 import { setPortalLanguage, type PortalLanguage } from "@/lib/i18n";
 import { getSupabase } from "@/lib/supabase";
@@ -51,8 +52,11 @@ export function PortalTopHeader({
   const [profile, setProfile] = useState<HeaderProfile | null>(null);
   const [langOpen, setLangOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const langRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
+  const notificationsRef = useRef<HTMLDivElement>(null);
+  const unreadCount = notificationUnreadCount();
 
   const currentLang: PortalLanguage = i18n.language === "es" ? "es" : "en";
   const langShort = currentLang === "es" ? "ES" : "EN";
@@ -106,6 +110,9 @@ export function PortalTopHeader({
       }
       if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
         setProfileOpen(false);
+      }
+      if (notificationsRef.current && !notificationsRef.current.contains(event.target as Node)) {
+        setNotificationsOpen(false);
       }
     };
 
@@ -166,7 +173,11 @@ export function PortalTopHeader({
               className="portal-top-lang-btn"
               aria-expanded={langOpen}
               aria-haspopup="listbox"
-              onClick={() => setLangOpen((open) => !open)}
+              onClick={() => {
+                setLangOpen((open) => !open);
+                setProfileOpen(false);
+                setNotificationsOpen(false);
+              }}
             >
               <Globe className="h-4 w-4 text-gray-400" strokeWidth={1.75} />
               <span className="text-sm font-medium text-gray-200">{langShort}</span>
@@ -200,10 +211,29 @@ export function PortalTopHeader({
             ) : null}
           </div>
 
-          <button type="button" className="portal-top-icon-btn relative" aria-label={t("shell.notifications")}>
-            <Bell className="h-4 w-4" strokeWidth={1.75} />
-            <span className="portal-top-notification-badge">2</span>
-          </button>
+          <div className="relative" ref={notificationsRef}>
+            <button
+              type="button"
+              className="portal-top-icon-btn relative"
+              aria-label={t("shell.notifications")}
+              aria-expanded={notificationsOpen}
+              aria-haspopup="dialog"
+              onClick={() => {
+                setNotificationsOpen((open) => !open);
+                setLangOpen(false);
+                setProfileOpen(false);
+              }}
+            >
+              <Bell className="h-4 w-4" strokeWidth={1.75} />
+              {unreadCount > 0 ? (
+                <span className="portal-top-notification-badge">{unreadCount}</span>
+              ) : null}
+            </button>
+
+            {notificationsOpen ? (
+              <NotificationPopup onClose={() => setNotificationsOpen(false)} />
+            ) : null}
+          </div>
 
           <div className="hidden h-8 w-px bg-white/10 sm:block" aria-hidden />
 
@@ -213,7 +243,11 @@ export function PortalTopHeader({
               className="portal-top-profile-btn"
               aria-expanded={profileOpen}
               aria-haspopup="menu"
-              onClick={() => setProfileOpen((open) => !open)}
+              onClick={() => {
+                setProfileOpen((open) => !open);
+                setLangOpen(false);
+                setNotificationsOpen(false);
+              }}
             >
               <span className="portal-top-avatar">{initials(profile?.name ?? t("login.subtitle"))}</span>
               <span className="hidden min-w-0 text-left md:block">

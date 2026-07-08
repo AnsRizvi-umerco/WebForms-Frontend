@@ -9,9 +9,11 @@ import { paths } from "@/paths";
 export { paths } from "@/paths";
 
 const ForgotPasswordPage = lazy(() => import("@/pages/ForgotPasswordPage"));
+const CompliancePage = lazy(() => import("@/pages/CompliancePage"));
 const DashboardPage = lazy(() => import("@/pages/DashboardPage"));
 const EdifactPage = lazy(() => import("@/pages/EdifactPage"));
 const LabelsPage = lazy(() => import("@/pages/LabelsPage"));
+const MessageHubPage = lazy(() => import("@/pages/MessageHubPage"));
 const ProfilePage = lazy(() => import("@/pages/ProfilePage"));
 const SchedulesPage = lazy(() => import("@/pages/SchedulesPage"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
@@ -47,6 +49,8 @@ export const authRoutes: AppRoute[] = [
   { path: paths.dashboard, element: <DashboardPage /> },
   { path: paths.labels, element: <LabelsPage /> },
   { path: paths.edifact, element: <EdifactPage /> },
+  { path: paths.compliance, element: <CompliancePage /> },
+  { path: paths.messageHub, element: <MessageHubPage /> },
   { path: paths.profile, element: <ProfilePage /> },
   { path: paths.settings, element: <SettingsPage /> },
   { path: paths.submit.asn, element: <SubmitAsnPage /> },

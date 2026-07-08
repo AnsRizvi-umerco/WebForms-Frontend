@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { PortalTopHeader } from "@/components/portal-top-header";
+import { ReportIssueWidget } from "@/components/ReportIssueWidget";
 import { Sidebar } from "@/components/umerco/Sidebar";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -27,6 +28,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <main className="flex-1 px-4 py-6 lg:px-8">{children}</main>
         </div>
       </div>
+
+      <ReportIssueWidget />
     </div>
   );
 }

@@ -6,6 +6,8 @@ export const paths = {
   dashboard: "/dashboard",
   labels: "/labels",
   edifact: "/edifact",
+  compliance: "/compliance",
+  messageHub: "/message-hub",
   profile: "/profile",
   settings: "/settings",
   submit: {

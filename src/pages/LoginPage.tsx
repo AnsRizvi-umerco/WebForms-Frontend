@@ -7,6 +7,7 @@ import { BarChart3, FileCheck, Lock, Mail, Truck } from "lucide-react";
 import { LoginField } from "@/components/forms/LoginField";
 import { LanguageToggle } from "@/components/language-toggle";
 import { Loader } from "@/components/umerco/Loader";
+import { ReportIssueWidget } from "@/components/ReportIssueWidget";
 import { useToast } from "@/components/umerco/toast";
 import { btnPrimaryLg } from "@/components/umerco/styles";
 import { paths } from "@/paths";
@@ -167,6 +168,8 @@ export default function LoginPage() {
           </div>
         </div>
       </section>
+
+      <ReportIssueWidget defaultCategory="login_access" />
     </main>
   );
 }
