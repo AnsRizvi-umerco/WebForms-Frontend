@@ -1,4 +1,5 @@
 import { Loader } from "./Loader";
+import { tdBase } from "./styles";
 
 type LoadingBlockProps = {
   message?: string;
@@ -6,6 +7,22 @@ type LoadingBlockProps = {
   size?: "sm" | "md" | "lg";
   className?: string;
 };
+
+export function TableRowsLoader({
+  colSpan,
+  message
+}: {
+  colSpan: number;
+  message?: string;
+}) {
+  return (
+    <tr>
+      <td colSpan={colSpan} className={`${tdBase} border-b-0 py-16`}>
+        <LoadingBlock message={message} size="sm" className="py-0" />
+      </td>
+    </tr>
+  );
+}
 
 export function LoadingBlock({
   message,

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   Bell,
@@ -11,32 +11,20 @@ import {
   Settings,
   UserCircle
 } from "lucide-react";
-import { apiRoutes, http } from "@/api";
-import { NotificationPopup, notificationUnreadCount } from "@/components/NotificationPopup";
-import { paths } from "@/paths";
+import { NotificationPopup } from "@/components/NotificationPopup";
+import { useMountedOpen } from "@/hooks/useMountedOpen";
+import { useNotifications } from "@/hooks/useNotifications";
+import { useAuth } from "@/context/auth-context";
 import { setPortalLanguage, type PortalLanguage } from "@/lib/i18n";
-import { getSupabase } from "@/lib/supabase";
+import { paths } from "@/paths";
 
 const LOGO_LIGHT_SRC = "/logo/logo-light.svg";
-
-type HeaderProfile = {
-  name: string;
-  code: string;
-  defaultFacility: string | null;
-};
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "?";
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-function shipFromLabel(profile: HeaderProfile): string {
-  if (profile.defaultFacility) {
-    return `ship-from ${profile.code} · ${profile.defaultFacility}`;
-  }
-  return `ship-from ${profile.code}`;
 }
 
 export function PortalTopHeader({
@@ -47,61 +35,31 @@ export function PortalTopHeader({
   onMenuToggle: () => void;
 }) {
   const { t, i18n } = useTranslation();
-  const navigate = useNavigate();
-  const supabase = getSupabase();
-  const [profile, setProfile] = useState<HeaderProfile | null>(null);
+  const { user: authUser, logout, signingOut } = useAuth();
   const [langOpen, setLangOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const langRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
   const notificationsRef = useRef<HTMLDivElement>(null);
-  const unreadCount = notificationUnreadCount();
+  const { items: notificationItems, unreadCount, markAllRead, markOneRead, reload } =
+    useNotifications();
+  const notificationsMounted = useMountedOpen(notificationsOpen, 180);
+  const langMounted = useMountedOpen(langOpen, 180);
+  const profileMounted = useMountedOpen(profileOpen, 180);
 
   const currentLang: PortalLanguage = i18n.language === "es" ? "es" : "en";
   const langShort = currentLang === "es" ? "ES" : "EN";
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadProfile() {
-      try {
-        const [profileRes, settingsRes] = await Promise.all([
-          http.get(apiRoutes.profile),
-          http.get(apiRoutes.settings.root)
-        ]);
-
-        if (cancelled || !profileRes.ok) return;
-
-        const profileJson = (await profileRes.json()) as { name?: string; code?: string };
-        let defaultFacility: string | null = null;
-
-        if (settingsRes.ok) {
-          const settingsJson = (await settingsRes.json()) as { default_facility?: string | null };
-          defaultFacility = settingsJson.default_facility ?? null;
-        }
-
-        setProfile({
-          name: profileJson.name ?? t("login.subtitle"),
-          code: profileJson.code ?? "—",
-          defaultFacility
-        });
-      } catch {
-        if (!cancelled) {
-          setProfile({
-            name: t("login.subtitle"),
-            code: "—",
-            defaultFacility: null
-          });
-        }
-      }
-    }
-
-    void loadProfile();
-    return () => {
-      cancelled = true;
-    };
-  }, [t]);
+  const companyName = authUser?.business_partner_name?.trim() || t("login.subtitle");
+  const roleLabel =
+    authUser?.actor === "partner_admin"
+      ? t("shell.roleAdmin")
+      : authUser?.actor === "supplier"
+        ? t("shell.roleSupplier")
+        : t("shell.loadingProfile");
+  const email = authUser?.email?.trim() || "";
+  const subtitle = email ? `${roleLabel} · ${email}` : roleLabel;
 
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
@@ -120,10 +78,9 @@ export function PortalTopHeader({
     return () => document.removeEventListener("mousedown", onPointerDown);
   }, []);
 
-  const onLogout = async () => {
+  const onLogout = () => {
     setProfileOpen(false);
-    await supabase.auth.signOut();
-    navigate(paths.login);
+    void logout();
   };
 
   const onLanguageChange = (lang: PortalLanguage) => {
@@ -154,12 +111,14 @@ export function PortalTopHeader({
           <Link to={paths.schedules} className="flex min-w-0 items-center gap-3">
             <img
               src={LOGO_LIGHT_SRC}
-              alt={t("login.subtitle")}
+              alt={authUser?.business_partner_name ?? t("login.subtitle")}
               className="h-7 w-auto shrink-0 object-contain"
             />
             <div className="hidden min-w-0 sm:block">
               <p className="truncate text-sm leading-tight">
-                <span className="font-semibold text-white">{t("login.subtitle")}</span>{" "}
+                <span className="font-semibold text-white">
+                  {authUser?.business_partner_name ?? t("login.subtitle")}
+                </span>{" "}
                 <span className="font-normal text-gray-400">{t("login.title")}</span>
               </p>
             </div>
@@ -187,8 +146,13 @@ export function PortalTopHeader({
               />
             </button>
 
-            {langOpen ? (
-              <div className="portal-top-dropdown absolute end-0 top-[calc(100%+0.5rem)] z-50 min-w-[10rem] py-1" role="listbox">
+            {langMounted ? (
+              <div
+                className={`portal-top-dropdown absolute end-0 top-[calc(100%+0.5rem)] z-50 min-w-[10rem] origin-top-right py-1 ${
+                  langOpen ? "animate-dropdown-in" : "pointer-events-none animate-dropdown-out"
+                }`}
+                role="listbox"
+              >
                 <button
                   type="button"
                   role="option"
@@ -219,19 +183,35 @@ export function PortalTopHeader({
               aria-expanded={notificationsOpen}
               aria-haspopup="dialog"
               onClick={() => {
-                setNotificationsOpen((open) => !open);
+                setNotificationsOpen((open) => {
+                  const next = !open;
+                  if (next) void reload();
+                  return next;
+                });
                 setLangOpen(false);
                 setProfileOpen(false);
               }}
             >
               <Bell className="h-4 w-4" strokeWidth={1.75} />
               {unreadCount > 0 ? (
-                <span className="portal-top-notification-badge">{unreadCount}</span>
+                <span className="portal-top-notification-badge">
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
               ) : null}
             </button>
 
-            {notificationsOpen ? (
-              <NotificationPopup onClose={() => setNotificationsOpen(false)} />
+            {notificationsMounted ? (
+              <NotificationPopup
+                open={notificationsOpen}
+                items={notificationItems}
+                onClose={() => setNotificationsOpen(false)}
+                onMarkAllRead={() => {
+                  void markAllRead();
+                }}
+                onItemClick={(id) => {
+                  void markOneRead(id);
+                }}
+              />
             ) : null}
           </div>
 
@@ -249,14 +229,12 @@ export function PortalTopHeader({
                 setNotificationsOpen(false);
               }}
             >
-              <span className="portal-top-avatar">{initials(profile?.name ?? t("login.subtitle"))}</span>
+              <span className="portal-top-avatar">{initials(companyName)}</span>
               <span className="hidden min-w-0 text-left md:block">
                 <span className="block truncate text-sm font-semibold text-white">
-                  {profile?.name ?? t("login.subtitle")}
+                  {companyName}
                 </span>
-                <span className="block truncate text-xs text-gray-400">
-                  {profile ? shipFromLabel(profile) : t("shell.loadingProfile")}
-                </span>
+                <span className="block truncate text-xs text-gray-400">{subtitle}</span>
               </span>
               <ChevronDown
                 className={`hidden h-4 w-4 shrink-0 text-gray-500 transition-transform md:block ${profileOpen ? "rotate-180" : ""}`}
@@ -264,8 +242,13 @@ export function PortalTopHeader({
               />
             </button>
 
-            {profileOpen ? (
-              <div className="portal-top-dropdown absolute end-0 top-[calc(100%+0.5rem)] z-50 min-w-[12rem] py-1" role="menu">
+            {profileMounted ? (
+              <div
+                className={`portal-top-dropdown absolute end-0 top-[calc(100%+0.5rem)] z-50 min-w-[12rem] origin-top-right py-1 ${
+                  profileOpen ? "animate-dropdown-in" : "pointer-events-none animate-dropdown-out"
+                }`}
+                role="menu"
+              >
                 <Link
                   to={paths.profile}
                   className="portal-top-dropdown-item flex items-center gap-2"
@@ -289,10 +272,11 @@ export function PortalTopHeader({
                   type="button"
                   className="portal-top-dropdown-item flex w-full items-center gap-2 text-red-600"
                   role="menuitem"
+                  disabled={signingOut}
                   onClick={() => void onLogout()}
                 >
                   <LogOut className="h-4 w-4" strokeWidth={1.75} />
-                  {t("button.logout")}
+                  {signingOut ? t("login.signingOut") : t("button.logout")}
                 </button>
               </div>
             ) : null}

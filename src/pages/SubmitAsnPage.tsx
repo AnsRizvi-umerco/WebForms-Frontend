@@ -2,15 +2,20 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { LoadingBlock } from "@/components/umerco/LoadingBlock";
+import { LoadingBlock, TableRowsLoader } from "@/components/umerco/LoadingBlock";
+import { UmercoAlert } from "@/components/umerco/UmercoAlert";
 import { btnDark, tableHeader } from "@/components/umerco/styles";
 import { useToastMessage } from "@/hooks/useToastMessage";
+import { DocumentTypeGate } from "@/components/forms/DocumentTypeGate";
 import { SubmitRequestResponsePanel } from "@/components/forms/SubmitRequestResponsePanel";
 import { useDocumentSubmit } from "@/components/forms/useDocumentSubmit";
-import { toCompactYyyymmdd } from "@/lib/dates/compact";
+import { toCompactYyyymmdd, todayLocalIsoDateInput } from "@/lib/dates/compact";
+import { isTestConnectionSearch, TEST_BUYER_NAME, TEST_FACILITY } from "@/lib/test-connection";
+import { useSessionEdiCodes } from "@/lib/session-edi";
 import { apiRoutes, http } from "@/api";
 import { ScheduleFacilityFields } from "@/components/forms/ScheduleFacilityFields";
 import { primaryFacilityFromLines, uniqueFacilitiesFromLines } from "@/lib/facilities";
+import { mapAsnPrefillFromOrder } from "@/lib/asn-prefill";
 import { resolveBuyerDisplayName, type SchedulePrefillMessage } from "@/lib/trading-partners";
 
 type AsnLine = {
@@ -21,6 +26,7 @@ type AsnLine = {
   qtyShipped: number;
   uom: string;
   containerType: string;
+  poDate: string;
 };
 
 type ScheduleLinePrefill = {
@@ -39,6 +45,8 @@ type SchedulePrefillResponse = {
     trading_partner?: string | null;
   } | null;
   message: SchedulePrefillMessage | null;
+  purchaseOrder?: unknown;
+  canonical_json_raw?: unknown;
   lines: ScheduleLinePrefill[];
   error?: string;
 };
@@ -61,7 +69,8 @@ const EMPTY_ASN_LINE: AsnLine = {
   description: "",
   qtyShipped: 0,
   uom: "EA",
-  containerType: "PALLET"
+  containerType: "PALLET",
+  poDate: ""
 };
 
 /** Deterministic stand-in when no buyer PO exists in data (traceable for support / logs). */
@@ -81,30 +90,34 @@ const PACKAGE_TYPES = ["PALLET", "CARTON", "CRATE", "TOTE"];
 export default function SubmitAsnPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const scheduleId = searchParams.get("schedule");
+  const isTest = isTestConnectionSearch(searchParams);
+  const scheduleId = isTest ? null : searchParams.get("schedule");
   const requiresSchedulePrefill = Boolean(scheduleId);
+  const { supplierCode, tradingPartner } = useSessionEdiCodes();
   const { pending, result, lastRequest, submit } = useDocumentSubmit();
   const userEditedRef = useRef(false);
   const appliedScheduleIdRef = useRef<string | null>(null);
   const appliedSettingsRef = useRef(false);
   const [form, setForm] = useState({
     supplierName: "XYZ Parts International Ltd.",
-    tradingPartner: "",
-    buyerCompanyName: "",
+    tradingPartner,
+    buyerCompanyName: isTest ? TEST_BUYER_NAME : "",
     asnRef: `ASN-${new Date().getFullYear()}-0001`,
-    shipDate: "",
+    shipDate: isTest ? todayLocalIsoDateInput() : "",
     shipTime: "10:00",
-    transportMode: "",
-    carrier: "",
-    trackingNo: "",
-    bolNumber: "",
-    shipToFacility: "",
+    transportMode: isTest ? "TRUCK" : "",
+    carrier: isTest ? "TEST CARRIER" : "",
+    trackingNo: isTest ? "TRK-TEST-001" : "",
+    bolNumber: isTest ? "BOL-TEST-001" : "",
+    shipToFacility: isTest ? TEST_FACILITY : "",
+    shipToId: "",
+    shipFromId: "",
     packageCount: 1,
     packageType: "PALLET",
     grossWeight: 0,
     netWeight: 0,
     notes: "",
-    supplierCode: "XYZ-PARTS"
+    supplierCode
   });
   const [lines, setLines] = useState<AsnLine[]>(() =>
     requiresSchedulePrefill
@@ -117,7 +130,8 @@ export default function SubmitAsnPage() {
             description: "Battery Cell Module",
             qtyShipped: 250,
             uom: "EA",
-            containerType: "PALLET"
+            containerType: "PALLET",
+            poDate: "20260810"
           }
         ]
   );
@@ -126,6 +140,14 @@ export default function SubmitAsnPage() {
   const [prefillError, setPrefillError] = useState<string | null>(null);
   const [prefillWarning, setPrefillWarning] = useState<string | null>(null);
   const isSchedulePrefillLocked = requiresSchedulePrefill && prefillLoading;
+
+  useEffect(() => {
+    setForm((prev) => ({
+      ...prev,
+      supplierCode,
+      tradingPartner
+    }));
+  }, [supplierCode, tradingPartner]);
 
   useToastMessage(prefillError, "error");
   useToastMessage(prefillWarning, "warning");
@@ -145,6 +167,9 @@ export default function SubmitAsnPage() {
       trackingNo: form.trackingNo.trim() || "NO-TRACKING-YET",
       bolNumber: form.bolNumber.trim() || "NO-BOL-YET",
       shipToFacility: form.shipToFacility,
+      shipToId: form.shipToId.trim() || undefined,
+      shipFromId: form.shipFromId.trim() || undefined,
+      usageIndicator: isTest ? "T" : "P",
       packageCount: String(pkg),
       packageType: form.packageType,
       grossWeight: (Number.isFinite(gw) ? gw : 0).toString(),
@@ -157,10 +182,11 @@ export default function SubmitAsnPage() {
         description: line.description.trim() || line.partNo.trim() || "Item",
         qtyShipped: String(Math.max(0, Math.floor(Number(line.qtyShipped)) || 0)),
         uom: line.uom,
-        containerType: line.containerType
+        containerType: line.containerType,
+        ...(line.poDate.trim() ? { poDate: line.poDate.trim() } : {})
       }))
     };
-  }, [form, lines]);
+  }, [form, lines, isTest]);
 
   const onSubmit = async () => {
     await submit({
@@ -264,16 +290,30 @@ export default function SubmitAsnPage() {
           return;
         }
 
+        const orderPrefill = mapAsnPrefillFromOrder(json.purchaseOrder ?? json.canonical_json_raw);
         const deljitRef = schedule.deljit_ref;
-        const nextLines = json.lines.map((line, index) => ({
-          poNumber: poPlaceholder(deljitRef, index),
-          poLine: String(index + 1).padStart(3, "0"),
-          partNo: line.part_no,
-          description: line.description?.trim() || line.part_no,
-          qtyShipped: line.qty_required,
-          uom: line.uom,
-          containerType: "PALLET"
-        }));
+        const nextLines =
+          orderPrefill && orderPrefill.lines.length > 0
+            ? orderPrefill.lines.map((line) => ({
+                poNumber: line.poNumber || poPlaceholder(deljitRef, 0),
+                poLine: line.poLine,
+                partNo: line.partNo,
+                description: line.description,
+                qtyShipped: line.qtyShipped,
+                uom: line.uom,
+                containerType: "PALLET",
+                poDate: line.poDate
+              }))
+            : json.lines.map((line, index) => ({
+                poNumber: poPlaceholder(deljitRef, index),
+                poLine: String(index + 1).padStart(3, "0"),
+                partNo: line.part_no,
+                description: line.description?.trim() || line.part_no,
+                qtyShipped: line.qty_required,
+                uom: line.uom,
+                containerType: "PALLET",
+                poDate: ""
+              }));
 
         const facilities = uniqueFacilitiesFromLines(json.lines);
         const partner =
@@ -281,9 +321,15 @@ export default function SubmitAsnPage() {
         setScheduleFacilities(facilities);
         setForm((prev) => ({
           ...prev,
-          tradingPartner: partner,
-          buyerCompanyName: partner ? resolveBuyerDisplayName(partner) : prev.buyerCompanyName,
-          shipToFacility: primaryFacilityFromLines(json.lines)
+          buyerCompanyName: orderPrefill?.buyerCompanyName
+            ? resolveBuyerDisplayName(orderPrefill.buyerCompanyName)
+            : partner
+              ? resolveBuyerDisplayName(partner)
+              : prev.buyerCompanyName,
+          supplierName: orderPrefill?.vendorName || prev.supplierName,
+          shipToFacility: orderPrefill?.shipToName || primaryFacilityFromLines(json.lines),
+          shipToId: orderPrefill?.shipToId || prev.shipToId,
+          shipFromId: orderPrefill?.vendorId || prev.shipFromId
         }));
         setLines(nextLines.length > 0 ? nextLines : [EMPTY_ASN_LINE]);
         if (nextLines.length === 0) {
@@ -309,7 +355,13 @@ export default function SubmitAsnPage() {
   }, [scheduleId]);
 
   return (
+    <DocumentTypeGate messageType="DESADV">
     <div className="mx-auto max-w-6xl space-y-6 py-6">
+        {isTest ? (
+          <UmercoAlert variant="info">
+            Test connection — sample ASN payload. Submit sends to your channel URL.
+          </UmercoAlert>
+        ) : null}
         <button
           type="button"
           onClick={() => navigate("/schedules")}
@@ -365,9 +417,9 @@ export default function SubmitAsnPage() {
                 onChange={(e) => updateForm("supplierName", e.target.value)}
               />
               <input
-                className="umerco-input text-sm"
-                value={form.supplierCode}
-                onChange={(e) => updateForm("supplierCode", e.target.value)}
+                className="umerco-input-readonly font-mono text-sm"
+                value={form.supplierCode || "—"}
+                readOnly
               />
             </div>
           </div>
@@ -505,9 +557,6 @@ export default function SubmitAsnPage() {
             Line Items
           </h2>
           <div className="overflow-x-auto rounded-md border border-umerco-border">
-            {isSchedulePrefillLocked ? (
-              <LoadingBlock message="Loading line items from schedule…" />
-            ) : (
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className={tableHeader}>
@@ -521,7 +570,10 @@ export default function SubmitAsnPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-umerco-border">
-                {lines.map((line, idx) => (
+                {isSchedulePrefillLocked ? (
+                  <TableRowsLoader colSpan={7} message="Loading line items from schedule…" />
+                ) : (
+                lines.map((line, idx) => (
                   <tr key={`${line.poLine}-${idx}`} className="hover:bg-umerco-beige">
                     <td className="px-3 py-2 font-mono text-xs text-umerco-muted">{line.poNumber}</td>
                     <td className="px-3 py-2 font-mono text-xs text-umerco-muted">{line.poLine}</td>
@@ -575,13 +627,10 @@ export default function SubmitAsnPage() {
                       </select>
                     </td>
                   </tr>
-                ))}
+                ))
+                )}
               </tbody>
             </table>
-            )}
-          </div>
-          <div className="mt-4 rounded-md border border-umerco-border bg-umerco-canvas px-3 py-2 text-xs text-umerco-dark">
-            AIAG B-10 labels will auto-generate per line item on submission.
           </div>
         </div>
 
@@ -614,5 +663,6 @@ export default function SubmitAsnPage() {
 
         <SubmitRequestResponsePanel lastRequest={lastRequest} result={result} />
       </div>
+    </DocumentTypeGate>
   );
 }

@@ -2,25 +2,33 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { LoadingBlock } from "@/components/umerco/LoadingBlock";
+import { LoadingBlock, TableRowsLoader } from "@/components/umerco/LoadingBlock";
+import { UmercoAlert } from "@/components/umerco/UmercoAlert";
 import { btnDark, tableHeader } from "@/components/umerco/styles";
 import { useToastMessage } from "@/hooks/useToastMessage";
+import { DocumentTypeGate } from "@/components/forms/DocumentTypeGate";
 import { SubmitRequestResponsePanel } from "@/components/forms/SubmitRequestResponsePanel";
 import { useDocumentSubmit } from "@/components/forms/useDocumentSubmit";
 import { todayLocalIsoDateInput, toCompactYyyymmdd } from "@/lib/dates/compact";
+import { isTestConnectionSearch, TEST_BUYER_NAME, TEST_FACILITY } from "@/lib/test-connection";
+import { useSessionEdiCodes } from "@/lib/session-edi";
 import { ScheduleFacilityFields } from "@/components/forms/ScheduleFacilityFields";
 import { primaryFacilityFromLines, uniqueFacilitiesFromLines } from "@/lib/facilities";
+import { mapAckPrefillFromOrder } from "@/lib/ack-prefill";
 import { resolveBuyerDisplayName, type SchedulePrefillMessage } from "@/lib/trading-partners";
 import { apiRoutes, http } from "@/api";
 
 type PoLine = {
   poLine: string;
   partNo: string;
+  description: string;
   qtyOrdered: number;
   qtyConfirmed: number;
   promisedDate: string;
   responseCode: "AC" | "IB" | "RJ";
   reasonCode: string;
+  uom: string;
+  unitPrice: string;
 };
 
 type ScheduleLinePrefill = {
@@ -37,6 +45,8 @@ type SchedulePrefillResponse = {
     trading_partner?: string | null;
   } | null;
   message: SchedulePrefillMessage | null;
+  purchaseOrder?: unknown;
+  canonical_json_raw?: unknown;
   lines: ScheduleLinePrefill[];
   error?: string;
 };
@@ -44,11 +54,14 @@ type SchedulePrefillResponse = {
 const EMPTY_PO_LINE: PoLine = {
   poLine: "001",
   partNo: "",
+  description: "",
   qtyOrdered: 0,
   qtyConfirmed: 0,
   promisedDate: todayLocalIsoDateInput(),
   responseCode: "AC",
-  reasonCode: "NONE"
+  reasonCode: "NONE",
+  uom: "EA",
+  unitPrice: "0.00"
 };
 
 const RESPONSE_OPTIONS: Array<{ value: PoLine["responseCode"]; label: string }> = [
@@ -68,18 +81,24 @@ const REASON_CODES = [
 export default function PoAckPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const scheduleId = searchParams.get("schedule");
+  const isTest = isTestConnectionSearch(searchParams);
+  const scheduleId = isTest ? null : searchParams.get("schedule");
   const requiresSchedulePrefill = Boolean(scheduleId);
+  const { supplierCode, tradingPartner } = useSessionEdiCodes();
   const { pending, result, lastRequest, submit } = useDocumentSubmit();
   const userEditedRef = useRef(false);
   const appliedScheduleIdRef = useRef<string | null>(null);
   const [header, setHeader] = useState({
-    supplierCode: "XYZ-PARTS",
+    supplierCode,
     supplierName: "XYZ Parts International Ltd.",
-    tradingPartner: "",
-    buyerCompanyName: "",
-    facility: "",
+    tradingPartner,
+    buyerCompanyName: isTest ? TEST_BUYER_NAME : "",
+    facility: isTest ? TEST_FACILITY : "",
     poReference: "PO-84201",
+    poDate: "",
+    currency: "USD",
+    buyerId: "",
+    vendorId: "",
     responseDate: todayLocalIsoDateInput(),
     note: ""
   });
@@ -90,11 +109,14 @@ export default function PoAckPage() {
           {
             poLine: "001",
             partNo: "LC-BATT-4680",
+            description: "Battery Cell Module",
             qtyOrdered: 500,
             qtyConfirmed: 500,
             promisedDate: todayLocalIsoDateInput(),
             responseCode: "AC",
-            reasonCode: "NONE"
+            reasonCode: "NONE",
+            uom: "EA",
+            unitPrice: "100.00"
           }
         ]
   );
@@ -104,6 +126,14 @@ export default function PoAckPage() {
   const [prefillWarning, setPrefillWarning] = useState<string | null>(null);
   const isSchedulePrefillLocked = requiresSchedulePrefill && prefillLoading;
 
+  useEffect(() => {
+    setHeader((prev) => ({
+      ...prev,
+      supplierCode,
+      tradingPartner
+    }));
+  }, [supplierCode, tradingPartner]);
+
   useToastMessage(prefillError, "error");
   useToastMessage(prefillWarning, "warning");
 
@@ -112,11 +142,14 @@ export default function PoAckPage() {
       lines.map((line) => ({
         poLine: line.poLine,
         partNo: line.partNo,
+        description: line.description.trim() || line.partNo,
         qtyOrdered: String(Math.max(0, Math.floor(Number(line.qtyOrdered)) || 0)),
         qtyConfirmed: String(Math.max(0, Math.floor(Number(line.qtyConfirmed)) || 0)),
         promisedDate: toCompactYyyymmdd(line.promisedDate),
         responseCode: line.responseCode,
-        reasonCode: line.reasonCode
+        reasonCode: line.reasonCode,
+        uom: line.uom,
+        unitPrice: line.unitPrice
       })),
     [lines]
   );
@@ -183,15 +216,33 @@ export default function PoAckPage() {
           return;
         }
 
-        const nextLines = json.lines.map((line, index) => ({
-          poLine: String(index + 1).padStart(3, "0"),
-          partNo: line.part_no,
-          qtyOrdered: line.qty_required,
-          qtyConfirmed: line.qty_required,
-          promisedDate: line.deliver_by,
-          responseCode: "AC" as const,
-          reasonCode: "NONE"
-        }));
+        const orderPrefill = mapAckPrefillFromOrder(json.purchaseOrder ?? json.canonical_json_raw);
+        const nextLines =
+          orderPrefill && orderPrefill.lines.length > 0
+            ? orderPrefill.lines.map((line, index) => ({
+                poLine: line.poLine,
+                partNo: line.partNo,
+                description: line.description,
+                qtyOrdered: line.qty,
+                qtyConfirmed: line.qty,
+                promisedDate: json.lines[index]?.deliver_by || todayLocalIsoDateInput(),
+                responseCode: "AC" as const,
+                reasonCode: "NONE",
+                uom: line.uom,
+                unitPrice: line.unitPrice
+              }))
+            : json.lines.map((line, index) => ({
+                poLine: String(index + 1).padStart(3, "0"),
+                partNo: line.part_no,
+                description: "",
+                qtyOrdered: line.qty_required,
+                qtyConfirmed: line.qty_required,
+                promisedDate: line.deliver_by,
+                responseCode: "AC" as const,
+                reasonCode: "NONE",
+                uom: "EA",
+                unitPrice: "0.00"
+              }));
 
         const facilities = uniqueFacilitiesFromLines(json.lines);
         const partner =
@@ -199,9 +250,18 @@ export default function PoAckPage() {
         setScheduleFacilities(facilities);
         setHeader((prev) => ({
           ...prev,
-          tradingPartner: partner,
-          buyerCompanyName: partner ? resolveBuyerDisplayName(partner) : prev.buyerCompanyName,
-          facility: primaryFacilityFromLines(json.lines)
+          buyerCompanyName: orderPrefill?.buyerCompanyName
+            ? resolveBuyerDisplayName(orderPrefill.buyerCompanyName)
+            : partner
+              ? resolveBuyerDisplayName(partner)
+              : prev.buyerCompanyName,
+          supplierName: orderPrefill?.vendorName || prev.supplierName,
+          facility: orderPrefill?.facility || primaryFacilityFromLines(json.lines),
+          poReference: orderPrefill?.poNumber || json.schedule.deljit_ref,
+          poDate: orderPrefill?.poDate || prev.poDate,
+          currency: orderPrefill?.currency || prev.currency,
+          buyerId: orderPrefill?.buyerId || prev.buyerId,
+          vendorId: orderPrefill?.vendorId || prev.vendorId
         }));
         setLines(nextLines.length > 0 ? nextLines : [EMPTY_PO_LINE]);
         if (nextLines.length === 0) {
@@ -233,10 +293,15 @@ export default function PoAckPage() {
       tradingPartner: header.tradingPartner,
       payload: {
         poReference: header.poReference,
+        ...(header.poDate.trim() ? { poDate: header.poDate.trim() } : {}),
         responseDate: toCompactYyyymmdd(header.responseDate),
         facility: header.facility,
         supplierName: header.supplierName,
         buyerCompanyName: header.buyerCompanyName,
+        buyerId: header.buyerId.trim() || undefined,
+        vendorId: header.vendorId.trim() || undefined,
+        currency: header.currency || undefined,
+        usageIndicator: isTest ? "T" : "P",
         note: header.note,
         lines: payloadLines
       }
@@ -244,7 +309,13 @@ export default function PoAckPage() {
   };
 
   return (
+    <DocumentTypeGate messageType="ORDRSP">
     <div className="mx-auto max-w-6xl space-y-6 py-6">
+        {isTest ? (
+          <UmercoAlert variant="info">
+            Test connection — sample PO acknowledgement payload. Submit sends to your channel URL.
+          </UmercoAlert>
+        ) : null}
         <button
           type="button"
           onClick={() => navigate("/schedules")}
@@ -303,10 +374,9 @@ export default function PoAckPage() {
                 placeholder="Supplier legal name"
               />
               <input
-                className="umerco-input text-sm"
-                value={header.supplierCode}
-                onChange={(e) => updateHeader("supplierCode", e.target.value)}
-                placeholder="Supplier code"
+                className="umerco-input-readonly font-mono text-sm"
+                value={header.supplierCode || "—"}
+                readOnly
               />
             </div>
           </div>
@@ -380,9 +450,6 @@ export default function PoAckPage() {
             PO Lines
           </h2>
           <div className="overflow-x-auto rounded-md border border-umerco-border">
-            {isSchedulePrefillLocked ? (
-              <LoadingBlock message="Loading line items from schedule…" />
-            ) : (
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className={tableHeader}>
@@ -396,7 +463,10 @@ export default function PoAckPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-umerco-border">
-                {lines.map((line, idx) => (
+                {isSchedulePrefillLocked ? (
+                  <TableRowsLoader colSpan={7} message="Loading line items from schedule…" />
+                ) : (
+                lines.map((line, idx) => (
                   <tr key={`${line.poLine}-${idx}`} className="hover:bg-umerco-beige">
                     <td className="px-3 py-2 font-mono text-xs text-umerco-muted">
                       {line.poLine}
@@ -471,10 +541,10 @@ export default function PoAckPage() {
                       </select>
                     </td>
                   </tr>
-                ))}
+                ))
+                )}
               </tbody>
             </table>
-            )}
           </div>
         </div>
 
@@ -500,12 +570,13 @@ export default function PoAckPage() {
             disabled={pending || missingRequired || isSchedulePrefillLocked}
             onClick={onSubmit}
           >
-            {pending ? "Submitting..." : "Submit ORDRSP"}
+            {pending ? "Submitting..." : "Submit PO Ack"}
           </button>
         </div>
         </fieldset>
 
         <SubmitRequestResponsePanel lastRequest={lastRequest} result={result} />
       </div>
+    </DocumentTypeGate>
   );
 }

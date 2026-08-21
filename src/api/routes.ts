@@ -42,5 +42,13 @@ export const apiRoutes = {
     integrationStatus: routes.settings.integrationStatus
   },
   edifact: routes.edifact,
-  labels: routes.labels
+  labels: routes.labels,
+  messageHub: routes.messageHub,
+  transactions: routes.transactions,
+  notifications: {
+    list: routes.notifications.list,
+    readAll: routes.notifications.readAll,
+    readOne: (notificationId: string) =>
+      substitute(routes.notifications.readOne, { notificationId })
+  }
 } as const;

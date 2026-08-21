@@ -12,6 +12,7 @@ import {
   Receipt,
   Search,
   SlidersHorizontal,
+  Users,
   X
 } from "lucide-react";
 import { apiRoutes, http, withQuery } from "@/api";
@@ -29,9 +30,13 @@ import {
 } from "@/components/umerco/styles";
 import { UmercoAlert } from "@/components/umerco/UmercoAlert";
 import { LoadingBlock } from "@/components/umerco/LoadingBlock";
+import { Collapse } from "@/components/umerco/Collapse";
 import { Pagination } from "@/components/umerco/Pagination";
 import { UmercoSectionLabel } from "@/components/umerco/UmercoSectionLabel";
 import { useToast } from "@/components/umerco/toast";
+import { useAuth } from "@/context/auth-context";
+import { isDocumentTypeAllowed } from "@/lib/document-types";
+import { PORTAL_INBOUND_SCHEDULE_EVENT } from "@/hooks/useNotifications";
 import type { DeljitMessage } from "@/lib/schemas/deljit";
 
 type DateRangeValue = "24h" | "7d" | "30d" | "12m" | "all" | "custom";
@@ -46,6 +51,9 @@ type ScheduleSummary = {
   status: string;
   received_at?: string;
   release_date?: string | null;
+  supplier_name?: string | null;
+  supplier_code?: string | null;
+  supplier_email?: string | null;
 };
 
 type ScheduleListResponse = {
@@ -83,6 +91,55 @@ type ScheduleLineRow = {
   facility: string;
 };
 
+type PurchaseOrderLine = {
+  lineNo?: string;
+  itemCode: string;
+  itemCodeQualifier?: string;
+  description: string;
+  quantity: string;
+  uom: string;
+  unitPrice?: string;
+  lineAmount?: string;
+};
+
+type PurchaseOrder = {
+  interchange: {
+    senderId?: string;
+    receiverId?: string;
+    interchangeControlNo?: string;
+  };
+  message: {
+    messageType: string;
+    functionalGroup?: string;
+    version?: string;
+  };
+  payload: {
+    poNumber: string;
+    poDate: string;
+    requestedDeliveryDate: string;
+    currency?: string;
+    buyerId?: string;
+    buyerName?: string;
+    vendorId?: string;
+    vendorName?: string;
+    shipTo?: {
+      id?: string;
+      name?: string;
+      street?: string;
+      city?: string;
+      state?: string;
+      postalCode?: string;
+      countryCode?: string;
+    };
+    lines: PurchaseOrderLine[];
+    summary?: {
+      lineCount?: string;
+      quantityHashTotal?: string;
+      orderTotal?: string;
+    };
+  };
+};
+
 type ScheduleDetailResponse = {
   schedule: {
     id: string;
@@ -92,9 +149,13 @@ type ScheduleDetailResponse = {
     period_end: string;
     status: string;
     received_at: string;
+    supplier_name?: string | null;
+    supplier_code?: string | null;
+    supplier_email?: string | null;
   } | null;
   lines: ScheduleLineRow[];
   message: DeljitMessage | null;
+  purchaseOrder?: PurchaseOrder | null;
   canonical_parse_error: string | null;
   canonical_json_raw: unknown;
   lines_consistent_with_message: boolean | null;
@@ -109,6 +170,7 @@ function formatInboundDate(value: string) {
 }
 
 function statusLabel(status: string) {
+  if (status === "invoice_sent") return "Invoice sent";
   if (status === "completed") return "Completed";
   if (status === "acknowledged") return "Acknowledged";
   if (status === "pending") return "Pending";
@@ -157,6 +219,22 @@ const PAGE_SIZE_OPTIONS = [5, 10, 20] as const;
 
 type OpenPanel = "filter" | "search" | null;
 
+function formatSupplierLabel(schedule: {
+  supplier_name?: string | null;
+  supplier_code?: string | null;
+  supplier_email?: string | null;
+}) {
+  const name = schedule.supplier_name?.trim();
+  const code = schedule.supplier_code?.trim();
+  const email = schedule.supplier_email?.trim();
+
+  if (name && code) return `${name} (${code})`;
+  if (name) return name;
+  if (code) return code;
+  if (email) return email;
+  return "Unknown supplier";
+}
+
 function formatPeriod(start: string, end: string) {
   const format = (value: string) => {
     const normalized = formatInboundDate(value);
@@ -175,8 +253,19 @@ function formatPeriod(start: string, end: string) {
   return startLabel === endLabel ? startLabel : `${startLabel} – ${endLabel}`;
 }
 
+function formatReceivedAt(value: string | undefined) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
 function panelToggleClass(open: boolean, active: boolean) {
-  const base = "inline-flex items-center gap-2";
+  const base = "inline-flex items-center gap-2 transition-all duration-200 ease-out";
   if (open) return `${base} ${btnPrimary}`;
   if (active) return `${base} ${btnSecondary} ring-2 ring-umerco-primary/20`;
   return `${base} ${btnSecondary}`;
@@ -196,6 +285,8 @@ function ChevronIcon({ expanded }: { expanded: boolean }) {
 
 export function SchedulesBoard() {
   const toast = useToast();
+  const { user } = useAuth();
+  const isPartnerAdmin = user?.actor === "partner_admin";
   const pathname = useLocation().pathname;
   const [searchParams] = useSearchParams();
   const [activeId, setActiveId] = useState<string | null>(() => searchParams.get("schedule"));
@@ -216,6 +307,7 @@ export function SchedulesBoard() {
   const listTopRef = useRef<HTMLDivElement>(null);
   const listAbortRef = useRef<AbortController | null>(null);
   const deljitSearchInputRef = useRef<HTMLInputElement>(null);
+  const appliedFiltersRef = useRef<FilterArgs>(INITIAL_FILTERS);
 
   const [detail, setDetail] = useState<ScheduleDetailResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -225,14 +317,14 @@ export function SchedulesBoard() {
   const detailAnchorRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const runListFetch = useCallback(async (args: FilterArgs, signal: AbortSignal) => {
+  const runListFetch = useCallback(async (args: FilterArgs, signal: AbortSignal, silent = false) => {
     if (args.range === "custom" && (!args.customFrom || !args.customTo)) {
       setListFetchError("Choose both From and To dates for a custom range.");
       return;
     }
 
     setListFetchError(null);
-    setListLoading(true);
+    if (!silent) setListLoading(true);
     try {
       const params = new URLSearchParams({
         basis: args.basis,
@@ -254,22 +346,26 @@ export function SchedulesBoard() {
       setSchedules(json.schedules ?? []);
       setLastAppliedKey(serializeFilterKey(args));
       setLastAppliedDeljitRef(args.deljitRef);
+      appliedFiltersRef.current = args;
     } catch (error) {
       if (signal.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
+      if (silent) return;
       const message = error instanceof Error ? error.message : "Failed to load schedules";
       setListFetchError(message);
       toast.error(message);
     } finally {
-      if (!signal.aborted) setListLoading(false);
+      if (!signal.aborted && !silent) setListLoading(false);
     }
   }, [toast]);
 
   const startListFetch = useCallback(
-    (args: FilterArgs) => {
-      listAbortRef.current?.abort();
+    (args: FilterArgs, silent = false) => {
+      if (!silent) {
+        listAbortRef.current?.abort();
+      }
       const ac = new AbortController();
-      listAbortRef.current = ac;
-      void runListFetch(args, ac.signal);
+      if (!silent) listAbortRef.current = ac;
+      void runListFetch(args, ac.signal, silent);
     },
     [runListFetch]
   );
@@ -278,6 +374,16 @@ export function SchedulesBoard() {
     startListFetch(INITIAL_FILTERS);
     return () => {
       listAbortRef.current?.abort();
+    };
+  }, [startListFetch]);
+
+  useEffect(() => {
+    const refresh = () => startListFetch(appliedFiltersRef.current, true);
+    window.addEventListener(PORTAL_INBOUND_SCHEDULE_EVENT, refresh);
+    const timer = window.setInterval(refresh, 20000);
+    return () => {
+      window.removeEventListener(PORTAL_INBOUND_SCHEDULE_EVENT, refresh);
+      window.clearInterval(timer);
     };
   }, [startListFetch]);
 
@@ -306,8 +412,8 @@ export function SchedulesBoard() {
     lastAppliedKey !== serializeFilterKey({ ...INITIAL_FILTERS, deljitRef: lastAppliedDeljitRef });
   const searchActive = lastAppliedDeljitRef.length > 0;
   const searchClearVisible = searchActive || pendingDeljitRef.trim().length > 0;
-  const showFilterPanel = openPanel === "filter" || filtersActive;
-  const showSearchPanel = openPanel === "search" || searchActive;
+  const showFilterPanel = openPanel === "filter";
+  const showSearchPanel = openPanel === "search";
 
   const onApplyFilters = () => {
     startListFetch(pendingFilterArgs);
@@ -346,20 +452,14 @@ export function SchedulesBoard() {
   };
 
   const toggleFiltersPanel = () => {
-    if (filtersActive) {
-      setOpenPanel("filter");
-      return;
-    }
     setOpenPanel((current) => (current === "filter" ? null : "filter"));
   };
 
   const toggleSearchPanel = () => {
-    if (searchActive) {
-      setOpenPanel("search");
-      return;
-    }
     setOpenPanel((current) => (current === "search" ? null : "search"));
   };
+
+  const closePanels = () => setOpenPanel(null);
 
   useEffect(() => {
     if (openPanel === "search") {
@@ -541,17 +641,9 @@ export function SchedulesBoard() {
   const scheduleStats = useMemo(() => {
     const pending = schedules.filter((schedule) => schedule.status === "pending").length;
     const acknowledged = schedules.filter((schedule) => schedule.status === "acknowledged").length;
-    const completed = schedules.filter((schedule) => schedule.status === "completed").length;
-    return { total: schedules.length, pending, acknowledged, completed };
+    const invoiceSent = schedules.filter((schedule) => schedule.status === "invoice_sent").length;
+    return { total: schedules.length, pending, acknowledged, invoiceSent };
   }, [schedules]);
-
-  if (listLoading) {
-    return (
-      <div className="flex min-h-[calc(100dvh-9.5rem)] items-center justify-center">
-        <LoadingBlock message="Loading schedules…" size="md" />
-      </div>
-    );
-  }
 
   return (
     <div className="min-w-0 space-y-6">
@@ -560,7 +652,9 @@ export function SchedulesBoard() {
           <UmercoSectionLabel>Delivery Schedules</UmercoSectionLabel>
           <h2 className="mt-1 text-2xl font-semibold tracking-tight text-umerco-dark">Delivery Schedules</h2>
           <p className="mt-1.5 max-w-2xl text-sm text-umerco-muted">
-            Review inbound DELJIT releases, acknowledge schedules, and create ASNs or invoices.
+            {isPartnerAdmin
+              ? "Monitor inbound purchase orders and delivery releases sent to each supplier across your trading network."
+              : "Review inbound purchase orders and delivery releases, then acknowledge, create ASNs, or invoice."}
           </p>
         </div>
 
@@ -588,25 +682,15 @@ export function SchedulesBoard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="Total" value={scheduleStats.total} />
-        <StatCard label="Pending" value={scheduleStats.pending} tone="pending" />
-        <StatCard label="Acknowledged" value={scheduleStats.acknowledged} tone="acknowledged" />
-        <StatCard label="Completed" value={scheduleStats.completed} tone="completed" />
-      </div>
-
-      {listFetchError ? (
-        <p className="text-xs text-umerco-muted">{listFetchError}</p>
-      ) : null}
-
-      {showFilterPanel && (
-        <div id="schedules-filter-panel" className="schedule-panel p-5">
+      <Collapse id="schedules-filter-panel" open={showFilterPanel}>
+        <div className="schedule-panel mb-2 mt-4 p-5">
           <div className="mb-4 flex items-center justify-between gap-2">
             <div>
               <p className="text-sm font-semibold text-umerco-dark">Date filters</p>
               <p className="mt-0.5 text-xs text-umerco-muted">Narrow schedules by period, received, or release date.</p>
             </div>
-            {filtersActive && (
+            <div className="flex shrink-0 items-center gap-2">
+            {filtersActive ? (
               <button
                 type="button"
                 className={`${btnSecondary} gap-1.5 px-2.5 py-1.5 text-xs`}
@@ -616,7 +700,16 @@ export function SchedulesBoard() {
                 <X className="h-3.5 w-3.5" strokeWidth={1.75} />
                 Clear
               </button>
-            )}
+            ) : null}
+              <button
+                type="button"
+                className={`${btnSecondary} px-2 py-1.5`}
+                aria-label="Close filters"
+                onClick={closePanels}
+              >
+                <X className="h-4 w-4" strokeWidth={1.75} />
+              </button>
+            </div>
           </div>
           <div className="flex flex-wrap items-end gap-3">
             <div className="grid min-w-0 flex-1 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -647,8 +740,8 @@ export function SchedulesBoard() {
                   <option value="all">All</option>
                 </select>
               </label>
-              {pendingRange === "custom" && (
-                <>
+              <Collapse open={pendingRange === "custom"}>
+                <div className="grid grid-cols-1 gap-3 sm:col-span-2 sm:grid-cols-2">
                   <label className="text-sm">
                     <span className="mb-1 block umerco-section-label">From</span>
                     <input
@@ -667,8 +760,8 @@ export function SchedulesBoard() {
                       onChange={(e) => setPendingCustomTo(e.target.value)}
                     />
                   </label>
-                </>
-              )}
+                </div>
+              </Collapse>
             </div>
             <button
               type="button"
@@ -679,39 +772,49 @@ export function SchedulesBoard() {
               Apply filters
             </button>
           </div>
-          {customIncomplete && (
+          {customIncomplete ? (
             <p className="mt-2 text-xs text-umerco-muted">Select both dates for a custom range before applying.</p>
-          )}
+          ) : null}
         </div>
-      )}
+      </Collapse>
 
-      {showSearchPanel && (
-        <div id="schedules-search-panel" className="schedule-panel p-5">
+      <Collapse id="schedules-search-panel" open={showSearchPanel}>
+        <div className="schedule-panel mb-2 mt-4 p-5">
           <div className="mb-4 flex items-center justify-between gap-2">
             <div>
-              <p className="text-sm font-semibold text-umerco-dark">DELJIT search</p>
-              <p className="mt-0.5 text-xs text-umerco-muted">Find a schedule by its DELJIT reference number.</p>
+              <p className="text-sm font-semibold text-umerco-dark">Reference search</p>
+              <p className="mt-0.5 text-xs text-umerco-muted">Find a schedule by PO number.</p>
             </div>
-            {searchClearVisible && (
+            <div className="flex shrink-0 items-center gap-2">
+            {searchClearVisible ? (
               <button
                 type="button"
                 className={`${btnSecondary} gap-1.5 px-2.5 py-1.5 text-xs`}
-                aria-label="Clear DELJIT search"
+                aria-label="Clear search"
                 onClick={onClearSearch}
               >
                 <X className="h-3.5 w-3.5" strokeWidth={1.75} />
                 Clear
               </button>
-            )}
+            ) : null}
+              <button
+                type="button"
+                className={`${btnSecondary} px-2 py-1.5`}
+                aria-label="Close search"
+                onClick={closePanels}
+              >
+                <X className="h-4 w-4" strokeWidth={1.75} />
+              </button>
+            </div>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <label className="min-w-[12rem] flex-1 text-sm">
-              <span className="mb-1 block umerco-section-label">DELJIT reference</span>
+              <span className="mb-1 block umerco-section-label">PO number</span>
               <input
                 ref={deljitSearchInputRef}
                 className="umerco-input w-full px-2 py-2 font-mono"
                 type="text"
-                placeholder="e.g. DELJIT-12345"
+                placeholder="e.g. PO-55231"
                 value={pendingDeljitRef}
                 onChange={(e) => setPendingDeljitRef(e.target.value)}
                 onKeyDown={(e) => {
@@ -731,10 +834,25 @@ export function SchedulesBoard() {
             </button>
           </div>
         </div>
-      )}
+      </Collapse>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatCard label="Total" value={scheduleStats.total} />
+        <StatCard label="Pending" value={scheduleStats.pending} tone="pending" />
+        <StatCard label="Acknowledged" value={scheduleStats.acknowledged} tone="acknowledged" />
+        <StatCard label="Invoice sent" value={scheduleStats.invoiceSent} tone="invoice_sent" />
+      </div>
+
+      {listFetchError ? (
+        <p className="text-xs text-umerco-muted">{listFetchError}</p>
+      ) : null}
 
       <div ref={listTopRef}>
-        {schedules.length === 0 ? (
+        {listLoading ? (
+          <div className="schedule-panel flex min-h-[12rem] items-center justify-center px-6 py-14">
+            <LoadingBlock message="Loading schedules…" size="sm" className="py-0" />
+          </div>
+        ) : schedules.length === 0 ? (
           <div className="schedule-panel flex flex-col items-center justify-center px-6 py-14 text-center">
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-umerco-primary-soft text-umerco-primary">
               <CalendarClock className="h-5 w-5" strokeWidth={1.75} />
@@ -742,7 +860,7 @@ export function SchedulesBoard() {
             <p className="mt-4 text-sm font-medium text-umerco-dark">No schedules found</p>
             <p className="mt-1 max-w-sm text-sm text-umerco-muted">
               {lastAppliedDeljitRef
-                ? "No schedules match this DELJIT reference. Try a different reference or clear the search."
+                ? "No schedules match this reference. Try a different PO number, or clear the search."
                 : "No schedules match these filters. Adjust your date range or clear filters to see more results."}
             </p>
           </div>
@@ -791,6 +909,12 @@ export function SchedulesBoard() {
                     <p className="mt-1 text-sm text-umerco-muted">
                       {formatPeriod(schedule.period_start, schedule.period_end)}
                     </p>
+                    {isPartnerAdmin ? (
+                      <p className="mt-1 text-sm text-umerco-dark">
+                        <span className="text-umerco-muted">Sent to </span>
+                        <span className="font-medium">{formatSupplierLabel(schedule)}</span>
+                      </p>
+                    ) : null}
                     <p className="mt-1 text-xs font-medium text-umerco-primary">
                       {expanded ? "Hide schedule details" : "View schedule details"}
                     </p>
@@ -801,33 +925,75 @@ export function SchedulesBoard() {
             </button>
 
             <div
-              className="grid grid-cols-1 gap-2 border-t border-umerco-border/70 px-5 py-4 sm:grid-cols-2 xl:grid-cols-4"
+              className="border-t border-umerco-border/70 px-5 py-4"
               onClick={(e) => e.stopPropagation()}
             >
-              <ScheduleActionLink
-                icon={<CheckCircle2 className="h-4 w-4" strokeWidth={1.75} />}
-                label="Acknowledge Schedule"
-                to={`/submit/scheduleack?schedule=${schedule.id}&deljitRef=${encodeURIComponent(schedule.deljit_ref)}`}
-                variant="secondary"
-              />
-              <ScheduleActionLink
-                icon={<FileCheck className="h-4 w-4" strokeWidth={1.75} />}
-                label="PO Acknowledgement"
-                to={`/submit/poack?schedule=${schedule.id}`}
-                variant="secondary"
-              />
-              <ScheduleActionLink
-                icon={<Package className="h-4 w-4" strokeWidth={1.75} />}
-                label="Create ASN"
-                to={`/submit/asn?schedule=${schedule.id}`}
-                variant="primary"
-              />
-              <ScheduleActionLink
-                icon={<Receipt className="h-4 w-4" strokeWidth={1.75} />}
-                label="Create Invoice"
-                to={`/submit/invoice?schedule=${schedule.id}`}
-                variant="outline"
-              />
+              {isPartnerAdmin ? (
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-umerco-canvas text-umerco-primary">
+                      <Users className="h-4 w-4" strokeWidth={1.75} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium uppercase tracking-wide text-umerco-muted">Supplier</p>
+                      <p className="mt-0.5 text-sm font-medium text-umerco-dark">{formatSupplierLabel(schedule)}</p>
+                      {schedule.supplier_email?.trim() ? (
+                        <p className="mt-0.5 truncate text-sm text-umerco-muted">{schedule.supplier_email.trim()}</p>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="sm:text-right">
+                    <p className="text-xs font-medium uppercase tracking-wide text-umerco-muted">Received</p>
+                    <p className="mt-0.5 text-sm text-umerco-dark">{formatReceivedAt(schedule.received_at)}</p>
+                    <p className="mt-1 text-xs text-umerco-muted">
+                      Supplier actions are completed in the supplier portal.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                  {isDocumentTypeAllowed(user, "ORDRSP") ? (
+                    <ScheduleActionLink
+                      icon={<FileCheck className="h-4 w-4" strokeWidth={1.75} />}
+                      label="PO Acknowledgement"
+                      to={`/submit/poack?schedule=${schedule.id}`}
+                      variant="secondary"
+                    />
+                  ) : null}
+                  {isDocumentTypeAllowed(user, "APERAK") ? (
+                    <ScheduleActionLink
+                      icon={<CheckCircle2 className="h-4 w-4" strokeWidth={1.75} />}
+                      label="Acknowledge Schedule"
+                      to={`/submit/scheduleack?schedule=${schedule.id}&deljitRef=${encodeURIComponent(schedule.deljit_ref)}`}
+                      variant="secondary"
+                    />
+                  ) : null}
+                  {isDocumentTypeAllowed(user, "DESADV") ? (
+                    <ScheduleActionLink
+                      icon={<Package className="h-4 w-4" strokeWidth={1.75} />}
+                      label="Create ASN"
+                      to={`/submit/asn?schedule=${schedule.id}`}
+                      variant="primary"
+                    />
+                  ) : null}
+                  {isDocumentTypeAllowed(user, "INVOIC") ? (
+                    <ScheduleActionLink
+                      icon={<Receipt className="h-4 w-4" strokeWidth={1.75} />}
+                      label="Create Invoice"
+                      to={`/submit/invoice?schedule=${schedule.id}`}
+                      variant="outline"
+                    />
+                  ) : null}
+                  {!isDocumentTypeAllowed(user, "APERAK") &&
+                  !isDocumentTypeAllowed(user, "ORDRSP") &&
+                  !isDocumentTypeAllowed(user, "DESADV") &&
+                  !isDocumentTypeAllowed(user, "INVOIC") ? (
+                    <p className="text-sm text-umerco-muted sm:col-span-2 xl:col-span-4">
+                      No outbound document types are enabled for this supplier.
+                    </p>
+                  ) : null}
+                </div>
+              )}
             </div>
             <div
               className={`grid transition-[grid-template-rows] duration-300 ease-out ${
@@ -845,6 +1011,7 @@ export function SchedulesBoard() {
                     rawExpanded={rawExpanded}
                     setRawExpanded={setRawExpanded}
                     onClose={closeSchedule}
+                    isPartnerAdmin={isPartnerAdmin}
                   />
                 ) : null}
               </div>
@@ -877,7 +1044,8 @@ function ScheduleDetailPanel({
   detail,
   rawExpanded,
   setRawExpanded,
-  onClose
+  onClose,
+  isPartnerAdmin
 }: {
   id: string;
   detailRef: React.Ref<HTMLDivElement>;
@@ -887,6 +1055,7 @@ function ScheduleDetailPanel({
   rawExpanded: boolean;
   setRawExpanded: (v: boolean) => void;
   onClose: () => void;
+  isPartnerAdmin: boolean;
 }) {
   return (
     <div
@@ -919,9 +1088,148 @@ function ScheduleDetailPanel({
         ) : fetchError ? (
           <p className="text-sm text-umerco-muted">{fetchError}</p>
         ) : detail?.schedule ? (
-          <DeljitDetailBody detail={detail} rawExpanded={rawExpanded} setRawExpanded={setRawExpanded} />
+          <>
+            {isPartnerAdmin ? (
+              <section className="mb-5 rounded-xl border border-umerco-border/70 bg-umerco-canvas/40 p-4">
+                <SectionTitle>Supplier assignment</SectionTitle>
+                <SectionSubtitle>This inbound schedule was routed to the supplier below.</SectionSubtitle>
+                <dl className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <OverviewField label="Supplier">{formatSupplierLabel(detail.schedule)}</OverviewField>
+                  <OverviewField label="Email">
+                    {detail.schedule.supplier_email?.trim() || "—"}
+                  </OverviewField>
+                  <OverviewField label="Received">{formatReceivedAt(detail.schedule.received_at)}</OverviewField>
+                </dl>
+              </section>
+            ) : null}
+            {detail.purchaseOrder ? (
+              <PurchaseOrderDetailBody
+                detail={detail}
+                rawExpanded={rawExpanded}
+                setRawExpanded={setRawExpanded}
+              />
+            ) : (
+              <DeljitDetailBody detail={detail} rawExpanded={rawExpanded} setRawExpanded={setRawExpanded} />
+            )}
+          </>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function formatShipTo(shipTo: PurchaseOrder["payload"]["shipTo"]): string {
+  if (!shipTo) return "Not specified";
+  const parts = [
+    shipTo.name,
+    shipTo.street,
+    [shipTo.city, shipTo.state, shipTo.postalCode].filter(Boolean).join(" "),
+    shipTo.countryCode
+  ].filter((part) => part && part.trim());
+  return parts.length > 0 ? parts.join(", ") : shipTo.id || "Not specified";
+}
+
+function PurchaseOrderDetailBody({
+  detail,
+  rawExpanded,
+  setRawExpanded
+}: {
+  detail: ScheduleDetailResponse;
+  rawExpanded: boolean;
+  setRawExpanded: (v: boolean) => void;
+}) {
+  const { schedule, purchaseOrder } = detail;
+  if (!schedule || !purchaseOrder) return null;
+  const { payload, message, interchange } = purchaseOrder;
+
+  return (
+    <div className="space-y-4">
+      <section>
+        <SectionTitle>Purchase order</SectionTitle>
+        <SectionSubtitle>Inbound 850 stored for this supplier.</SectionSubtitle>
+        <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-3 md:grid-cols-3 lg:grid-cols-4">
+          <OverviewField label="PO number" mono>
+            {payload.poNumber}
+          </OverviewField>
+          <OverviewField label="Document" mono>
+            {message.messageType}
+          </OverviewField>
+          <OverviewField label="PO date" mono>
+            {formatInboundDateDisplay(payload.poDate)}
+          </OverviewField>
+          <OverviewField label="Requested delivery" mono>
+            {formatInboundDateDisplay(payload.requestedDeliveryDate)}
+          </OverviewField>
+          {payload.currency ? <OverviewField label="Currency">{payload.currency}</OverviewField> : null}
+          {payload.buyerName || payload.buyerId ? (
+            <OverviewField label="Buyer">{payload.buyerName || payload.buyerId}</OverviewField>
+          ) : null}
+          {payload.vendorName || payload.vendorId ? (
+            <OverviewField label="Vendor">{payload.vendorName || payload.vendorId}</OverviewField>
+          ) : null}
+          <OverviewField label="Sender" mono>
+            {interchange.senderId || "—"}
+          </OverviewField>
+          <OverviewField label="Receiver" mono>
+            {interchange.receiverId || "—"}
+          </OverviewField>
+          {interchange.interchangeControlNo ? (
+            <OverviewField label="Control no" mono>
+              {interchange.interchangeControlNo}
+            </OverviewField>
+          ) : null}
+        </dl>
+      </section>
+
+      {payload.shipTo ? (
+        <section>
+          <SectionTitle>Ship to</SectionTitle>
+          <SectionSubtitle>{formatShipTo(payload.shipTo)}</SectionSubtitle>
+        </section>
+      ) : null}
+
+      <section>
+        <SectionTitle>Order lines</SectionTitle>
+        <SectionSubtitle>Items on this purchase order.</SectionSubtitle>
+        <OrderTable
+          headers={["Line", "Item", "Description", "Qty", "UoM", "Unit price", "Amount"]}
+          rows={payload.lines.map((line, i) => ({
+            key: `${line.itemCode}-${line.lineNo ?? i}`,
+            cells: [
+              { content: line.lineNo || String(i + 1), mono: true },
+              { content: line.itemCode, mono: true },
+              { content: line.description },
+              { content: line.quantity, align: "right" as const },
+              { content: line.uom },
+              { content: line.unitPrice || "—", align: "right" as const },
+              { content: line.lineAmount || "—", align: "right" as const }
+            ]
+          }))}
+        />
+        {payload.summary?.orderTotal ? (
+          <p className="mt-3 text-right text-sm font-medium text-umerco-dark">
+            Order total {payload.summary.orderTotal}
+            {payload.currency ? ` ${payload.currency}` : ""}
+          </p>
+        ) : null}
+      </section>
+
+      <section className="border-t border-umerco-border pt-4">
+        <SectionTitle>Technical</SectionTitle>
+        <SectionSubtitle>Raw payload for troubleshooting and integrations.</SectionSubtitle>
+        <button
+          type="button"
+          className="mt-2 text-sm font-medium text-umerco-dark"
+          onClick={() => setRawExpanded(!rawExpanded)}
+        >
+          {rawExpanded ? "Hide" : "Show"} canonical JSON
+        </button>
+        {rawExpanded ? (
+          <pre className="mt-3 rounded-xl border border-umerco-border bg-umerco-canvas p-4 text-xs leading-relaxed text-umerco-dark">
+            {JSON.stringify(detail.canonical_json_raw, null, 2)}
+          </pre>
+        ) : null}
+      </section>
     </div>
   );
 }
@@ -1163,14 +1471,14 @@ function StatCard({
 }: {
   label: string;
   value: number;
-  tone?: "default" | "pending" | "acknowledged" | "completed";
+  tone?: "default" | "pending" | "acknowledged" | "completed" | "invoice_sent";
 }) {
   const toneClass =
     tone === "pending"
       ? "text-umerco-muted"
       : tone === "acknowledged"
         ? "text-umerco-primary"
-        : tone === "completed"
+        : tone === "completed" || tone === "invoice_sent"
           ? "text-umerco-success"
           : "text-umerco-dark";
 
@@ -1197,7 +1505,7 @@ function ScheduleActionLink({
     variant === "primary" ? btnPrimary : variant === "outline" ? btnOutline : btnSecondary;
 
   return (
-    <Link className={`${variantClass} gap-2 px-3 py-2.5 text-xs sm:text-sm`} to={to}>
+    <Link className={`${variantClass} gap-2 px-3 py-2.5 text-xs transition-all duration-200 ease-out sm:text-sm`} to={to}>
       {icon}
       <span className="truncate">{label}</span>
     </Link>

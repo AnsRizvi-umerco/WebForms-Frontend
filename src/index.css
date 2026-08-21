@@ -155,6 +155,70 @@ h6 {
     color: #ffffff;
   }
 
+  .portal-nav-sublink {
+    color: #9ca3af;
+  }
+
+  .portal-nav-sublink:hover,
+  button.portal-nav-sublink:hover {
+    background-color: rgb(255 255 255 / 0.05);
+    color: #ffffff;
+  }
+
+  .portal-nav-sublink-active,
+  button.portal-nav-sublink-active {
+    background-color: rgb(37 99 235 / 0.22);
+    color: #ffffff;
+  }
+
+  .form-field-label {
+    @apply mb-1 block text-sm font-medium text-umerco-dark;
+  }
+
+  .form-field-hint {
+    @apply mt-1 text-xs text-umerco-muted;
+  }
+
+  .form-section + .form-section {
+    @apply mt-6 border-t border-umerco-border pt-6;
+  }
+
+  .form-section-header {
+    @apply mb-4;
+  }
+
+  .form-section-title {
+    @apply text-sm font-semibold text-umerco-dark;
+  }
+
+  .form-section-description {
+    @apply mt-0.5 text-xs text-umerco-muted;
+  }
+
+  .form-section-body {
+    @apply grid gap-4 sm:grid-cols-2;
+  }
+
+  .form-actions-bar {
+    @apply mt-6 flex flex-wrap items-center justify-end gap-3 border-t border-umerco-border pt-5;
+  }
+
+  .form-preview-card {
+    @apply rounded-card border border-umerco-border bg-umerco-beige/40 p-4;
+  }
+
+  .form-preview-avatar {
+    @apply flex h-11 w-11 items-center justify-center rounded-lg bg-umerco-dark text-sm font-semibold text-white;
+  }
+
+  .portal-access-panel {
+    @apply rounded-card border border-umerco-border bg-umerco-canvas/60 p-4;
+  }
+
+  .portal-access-panel-active {
+    @apply border-umerco-primary/25 bg-gradient-to-br from-umerco-primary-soft/70 via-white to-white shadow-sm;
+  }
+
   /* Buttons — compound selectors beat Tailwind preflight on <button> */
   .btn-primary,
   button.btn-primary,
@@ -291,6 +355,46 @@ h6 {
   button.pagination-page-active {
     background-color: #2563eb;
     color: #ffffff;
+  }
+
+  .umerco-checkbox {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 1.1rem;
+    height: 1.1rem;
+    margin: 0;
+    cursor: pointer;
+    border: 1.5px solid #c5c9d1;
+    border-radius: 0.3rem;
+    background-color: #ffffff;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 0.7rem 0.7rem;
+    transition:
+      border-color 0.15s ease,
+      background-color 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+
+  .umerco-checkbox:hover {
+    border-color: #2563eb;
+  }
+
+  .umerco-checkbox:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+  }
+
+  .umerco-checkbox:checked {
+    background-color: #2563eb;
+    border-color: #2563eb;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2.2 6.2 4.8 8.8 9.8 3.2' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
+
+  .umerco-checkbox:indeterminate {
+    background-color: #2563eb;
+    border-color: #2563eb;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2.5 6h7' stroke='%23fff' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E");
   }
 
   .portal-top-header {

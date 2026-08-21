@@ -1,7 +1,5 @@
-
-
 import { FormEvent, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { BarChart3, FileCheck, Lock, Mail, Truck } from "lucide-react";
 import { LoginField } from "@/components/forms/LoginField";
@@ -10,8 +8,8 @@ import { Loader } from "@/components/umerco/Loader";
 import { ReportIssueWidget } from "@/components/ReportIssueWidget";
 import { useToast } from "@/components/umerco/toast";
 import { btnPrimaryLg } from "@/components/umerco/styles";
+import { useAuth } from "@/context/auth-context";
 import { paths } from "@/paths";
-import { getSupabase } from "@/lib/supabase";
 
 const highlights = [
   { key: "login.feature.schedules", icon: Truck },
@@ -25,26 +23,29 @@ const LOGO_DARK_SRC = "/logo/logo-dark.svg";
 export default function LoginPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const supabase = getSupabase();
   const toast = useToast();
+  const { isAuthenticated, login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+
+  if (isAuthenticated) {
+    return <Navigate to={paths.dashboard} replace />;
+  }
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
     setPending(true);
     try {
-      const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
-      if (authError) {
-        setError(authError.message);
-        toast.error(authError.message);
-        return;
-      }
+      await login(email, password);
       toast.success(t("login.success", { defaultValue: "Signed in successfully." }));
       navigate(paths.dashboard);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Sign in failed";
+      setError(message);
+      toast.error(message);
     } finally {
       setPending(false);
     }
@@ -108,7 +109,7 @@ export default function LoginPage() {
               <p className="mt-1.5 text-sm text-umerco-muted">{t("login.welcomeHint")}</p>
             </div>
 
-            <div className="auth-form-card p-7 lg:p-8">
+            <div className="auth-form-card animate-login-in p-7 lg:p-8">
               <form className="space-y-5" onSubmit={onSubmit} noValidate>
                 <LoginField
                   label={t("login.email")}

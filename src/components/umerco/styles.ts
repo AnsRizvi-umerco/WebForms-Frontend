@@ -59,7 +59,7 @@ export const chartOutbound = "#059669";
 
 export function statusPill(status: string): string {
   const base = "rounded-full px-2.5 py-1 text-xs font-medium";
-  if (status === "completed") return `${base} status-pill-completed`;
+  if (status === "invoice_sent" || status === "completed") return `${base} status-pill-completed`;
   if (status === "acknowledged") return `${base} status-pill-acknowledged`;
   return `${base} status-pill-pending`;
 }

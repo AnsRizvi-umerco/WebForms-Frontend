@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Plus } from "lucide-react";
 import { Field } from "@/components/forms/Field";
-import { LoadingBlock } from "@/components/umerco/LoadingBlock";
+import { LoadingBlock, TableRowsLoader } from "@/components/umerco/LoadingBlock";
 import { UmercoAlert } from "@/components/umerco/UmercoAlert";
 import { UmercoSectionLabel } from "@/components/umerco/UmercoSectionLabel";
 import { useToastMessage } from "@/hooks/useToastMessage";
@@ -18,12 +18,16 @@ import {
   tdBase,
   trHover
 } from "@/components/umerco/styles";
+import { DocumentTypeGate } from "@/components/forms/DocumentTypeGate";
 import { SubmitRequestResponsePanel } from "@/components/forms/SubmitRequestResponsePanel";
 import { useDocumentSubmit } from "@/components/forms/useDocumentSubmit";
 import { todayLocalIsoDateInput, toCompactYyyymmdd } from "@/lib/dates/compact";
+import { isTestConnectionSearch, TEST_BUYER_NAME, TEST_FACILITY } from "@/lib/test-connection";
+import { useSessionEdiCodes } from "@/lib/session-edi";
 import { ScheduleFacilityFields } from "@/components/forms/ScheduleFacilityFields";
-import { primaryFacilityFromLines, uniqueFacilitiesFromLines } from "@/lib/facilities";
-import { resolveBuyerDisplayName, type SchedulePrefillMessage } from "@/lib/trading-partners";
+import { uniqueFacilitiesFromLines } from "@/lib/facilities";
+import { mapInvoicePrefillFromOrder } from "@/lib/invoice-prefill";
+import { useAuth } from "@/context/auth-context";
 import { apiRoutes, http } from "@/api";
 
 type InvoiceLine = {
@@ -50,7 +54,8 @@ type SchedulePrefillResponse = {
     deljit_ref: string;
     trading_partner?: string | null;
   } | null;
-  message: SchedulePrefillMessage | null;
+  purchaseOrder?: unknown;
+  canonical_json_raw?: unknown;
   lines: ScheduleLinePrefill[];
   error?: string;
 };
@@ -66,35 +71,38 @@ const EMPTY_LINE: InvoiceLine = {
 
 const PAYMENT_TERMS = ["NET30", "NET45", "NET60", "NET90", "DUE_ON_RECEIPT"];
 const CURRENCIES = ["USD", "EUR", "GBP", "SAR", "AED"];
-const UOM_OPTIONS = ["EA", "KG", "LB", "M", "FT", "L", "GAL", "PCS", "SET"];
+const UOM_OPTIONS = ["EA", "PC", "PCE", "KG", "LB", "M", "FT", "L", "GAL", "PCS", "SET"];
 const INVOICE_TYPES = ["STANDARD", "CREDIT_NOTE", "DEBIT_NOTE", "PROFORMA"];
 const INCOTERMS = ["EXW", "FCA", "FOB", "CIF", "DAP", "DDP"];
 
 export default function InvoicePage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const scheduleId = searchParams.get("schedule");
+  const isTest = isTestConnectionSearch(searchParams);
+  const scheduleId = isTest ? null : searchParams.get("schedule");
   const requiresSchedulePrefill = Boolean(scheduleId);
+  const { user } = useAuth();
+  const { supplierCode, tradingPartner } = useSessionEdiCodes();
+  const supplierCompanyName = user?.full_name?.trim() || user?.business_partner_name?.trim() || "";
   const { pending, result, lastRequest, submit } = useDocumentSubmit();
   const userEditedRef = useRef(false);
   const appliedScheduleIdRef = useRef<string | null>(null);
   const [header, setHeader] = useState({
-    supplierCode: "XYZ-PARTS",
-    supplierName: "XYZ Parts International Ltd.",
-    supplierTaxId: "US-94-5550088",
-    supplierAddress: "1450 Supplier Park Rd, Phoenix, AZ 85001",
-    supplierApEmail: "ap@xyzparts.example",
-    tradingPartner: "",
-    buyerCompanyName: "",
+    supplierCode,
+    supplierName: supplierCompanyName,
+    supplierTaxId: "",
+    supplierAddress: "",
+    supplierApEmail: "",
+    tradingPartner,
+    buyerCompanyName: isTest ? TEST_BUYER_NAME : "",
     invoiceNo: "INV-2026-00123",
     invoiceDate: todayLocalIsoDateInput(),
     dueDate: "",
-    poReference: "PO-84201",
-    asnReference: "ASN-2026-0041",
-    deljitReference: "DELJIT-1776369655006",
+    poReference: "",
+    asnReference: "",
     currency: "USD",
     paymentTerms: "NET30",
-    facility: "",
+    facility: isTest ? TEST_FACILITY : "",
     invoiceType: "STANDARD",
     incoterm: "FCA",
     notes: ""
@@ -102,16 +110,43 @@ export default function InvoicePage() {
   const [lines, setLines] = useState<InvoiceLine[]>(() =>
     requiresSchedulePrefill
       ? []
-      : [
-          {
-            poLine: "001",
-            partNo: "LC-BATT-4680",
-            description: "Battery Cell Module",
-            qty: 500,
-            uom: "EA",
-            unitPrice: 142.5
-          }
-        ]
+      : isTest
+        ? [
+            {
+              poLine: "001",
+              partNo: "LC-BATT-4680",
+              description: "Battery Cell Module",
+              qty: 250,
+              uom: "EA",
+              unitPrice: 200
+            },
+            {
+              poLine: "002",
+              partNo: "LC-MOT-2210",
+              description: "Electric Drive Motor",
+              qty: 75,
+              uom: "EA",
+              unitPrice: 2000
+            },
+            {
+              poLine: "003",
+              partNo: "LC-CTRL-8891",
+              description: "Battery Management Controller",
+              qty: 120,
+              uom: "EA",
+              unitPrice: 20000
+            }
+          ]
+        : [
+            {
+              poLine: "001",
+              partNo: "LC-BATT-4680",
+              description: "Battery Cell Module",
+              qty: 500,
+              uom: "EA",
+              unitPrice: 142.5
+            }
+          ]
   );
   const [scheduleFacilities, setScheduleFacilities] = useState<string[]>([]);
   const [prefillLoading, setPrefillLoading] = useState(requiresSchedulePrefill);
@@ -121,6 +156,15 @@ export default function InvoicePage() {
   const [discountAmount, setDiscountAmount] = useState(0);
   const [shippingAmount, setShippingAmount] = useState(0);
   const isSchedulePrefillLocked = requiresSchedulePrefill && prefillLoading;
+
+  useEffect(() => {
+    setHeader((prev) => ({
+      ...prev,
+      supplierCode: prev.supplierCode.trim() || supplierCode,
+      tradingPartner: prev.tradingPartner.trim() || tradingPartner,
+      supplierName: prev.supplierName.trim() || supplierCompanyName
+    }));
+  }, [supplierCode, supplierCompanyName, tradingPartner]);
 
   useToastMessage(prefillError, "error");
   useToastMessage(prefillWarning, "warning");
@@ -178,7 +222,12 @@ export default function InvoicePage() {
           return;
         }
 
-        const nextLines = json.lines.map((line, index) => ({
+        const mapped = mapInvoicePrefillFromOrder(
+          json.purchaseOrder ?? json.canonical_json_raw,
+          supplierCompanyName
+        );
+
+        const fallbackLines = json.lines.map((line, index) => ({
           poLine: String(index + 1).padStart(3, "0"),
           partNo: line.part_no,
           description: line.description ?? "",
@@ -186,17 +235,20 @@ export default function InvoicePage() {
           uom: line.uom,
           unitPrice: 0
         }));
+        const nextLines = mapped?.lines.length ? mapped.lines : fallbackLines;
+        const facilities =
+          mapped?.facilities.length ? mapped.facilities : uniqueFacilitiesFromLines(json.lines);
 
-        const facilities = uniqueFacilitiesFromLines(json.lines);
-        const partner =
-          json.message?.tradingPartner ?? json.schedule?.trading_partner ?? "";
         setScheduleFacilities(facilities);
         setHeader((prev) => ({
           ...prev,
-          deljitReference: json.schedule?.deljit_ref ?? prev.deljitReference,
-          tradingPartner: partner,
-          buyerCompanyName: partner ? resolveBuyerDisplayName(partner) : prev.buyerCompanyName,
-          facility: primaryFacilityFromLines(json.lines)
+          supplierName: mapped?.supplierName || supplierCompanyName || prev.supplierName,
+          supplierCode: mapped?.supplierCode || prev.supplierCode || supplierCode,
+          tradingPartner: mapped?.tradingPartner || prev.tradingPartner || tradingPartner,
+          buyerCompanyName: mapped?.buyerCompanyName || prev.buyerCompanyName,
+          facility: mapped?.facility || facilities[0] || prev.facility,
+          poReference: mapped?.poReference || json.schedule?.deljit_ref || prev.poReference,
+          currency: mapped?.currency || prev.currency
         }));
         setLines(nextLines.length > 0 ? nextLines : [EMPTY_LINE]);
 
@@ -220,7 +272,7 @@ export default function InvoicePage() {
     return () => {
       cancelled = true;
     };
-  }, [scheduleId]);
+  }, [scheduleId, supplierCode, supplierCompanyName, tradingPartner]);
 
   const updateHeader = (field: keyof typeof header, value: string) => {
     userEditedRef.current = true;
@@ -263,7 +315,7 @@ export default function InvoicePage() {
         dueDate: header.dueDate.trim() === "" ? "" : toCompactYyyymmdd(header.dueDate),
         poReference: header.poReference,
         asnReference: header.asnReference,
-        deljitReference: header.deljitReference,
+        deljitReference: "",
         currency: header.currency,
         paymentTerms: header.paymentTerms,
         invoiceType: header.invoiceType,
@@ -297,7 +349,13 @@ export default function InvoicePage() {
   const formatMoney = (amount: number) => `${header.currency} ${amount.toFixed(2)}`;
 
   return (
+    <DocumentTypeGate messageType="INVOIC">
     <div className="mx-auto max-w-6xl space-y-5 py-6">
+      {isTest ? (
+        <UmercoAlert variant="info">
+          Test connection — sample invoice payload. Submit sends to your channel URL.
+        </UmercoAlert>
+      ) : null}
       <button
         type="button"
         onClick={() => navigate("/schedules")}
@@ -333,9 +391,10 @@ export default function InvoicePage() {
           Open this form from a delivery schedule to load the trading partner and line items.
         </UmercoAlert>
       ) : null}
-      {requiresSchedulePrefill && !prefillLoading && !header.tradingPartner.trim() && !prefillError ? (
+      {(!header.supplierCode.trim() || !header.tradingPartner.trim()) && !prefillLoading ? (
         <UmercoAlert variant="warning">
-          Trading partner could not be loaded from the selected schedule.
+          Supplier or company Mutually Defined is missing from the signed-in session. Sign in again
+          as the supplier after those fields are saved.
         </UmercoAlert>
       ) : null}
       {requiresSchedulePrefill && !prefillLoading && !header.facility.trim() && !prefillError ? (
@@ -362,9 +421,9 @@ export default function InvoicePage() {
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Supplier Code">
                   <input
-                    className="umerco-input font-mono text-sm"
-                    value={header.supplierCode}
-                    onChange={(e) => updateHeader("supplierCode", e.target.value)}
+                    className="umerco-input-readonly font-mono text-sm"
+                    value={header.supplierCode || "—"}
+                    readOnly
                   />
                 </Field>
                 <Field label="Tax / VAT ID">
@@ -470,11 +529,13 @@ export default function InvoicePage() {
                 value={header.currency}
                 onChange={(e) => updateHeader("currency", e.target.value)}
               >
-                {CURRENCIES.map((currency) => (
-                  <option key={currency} value={currency}>
-                    {currency}
-                  </option>
-                ))}
+                {[header.currency, ...CURRENCIES]
+                  .filter((currency, index, all) => currency && all.indexOf(currency) === index)
+                  .map((currency) => (
+                    <option key={currency} value={currency}>
+                      {currency}
+                    </option>
+                  ))}
               </select>
             </Field>
             <Field label="Incoterm">
@@ -494,7 +555,7 @@ export default function InvoicePage() {
 
           <div className="mt-6 border-t border-umerco-border pt-5">
             <h3 className="umerco-section-label">References</h3>
-            <div className="mt-3 grid gap-4 sm:grid-cols-3">
+            <div className="mt-3 grid gap-4 sm:grid-cols-2">
               <Field label="PO Reference *">
                 <input
                   className="umerco-input text-sm"
@@ -508,9 +569,6 @@ export default function InvoicePage() {
                   value={header.asnReference}
                   onChange={(e) => updateHeader("asnReference", e.target.value)}
                 />
-              </Field>
-              <Field label="DELJIT Reference">
-                <input className="umerco-input-readonly font-mono" value={header.deljitReference} readOnly />
               </Field>
             </div>
           </div>
@@ -530,10 +588,7 @@ export default function InvoicePage() {
           </div>
 
           <div className={tableWrap}>
-            {isSchedulePrefillLocked ? (
-              <LoadingBlock message="Loading line items from schedule…" />
-            ) : (
-              <div className="overflow-x-auto">
+            <div className="overflow-x-auto">
                 <table className={tableBase}>
                   <thead>
                     <tr>
@@ -548,7 +603,10 @@ export default function InvoicePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {computedLines.map((line, idx) => (
+                    {isSchedulePrefillLocked ? (
+                      <TableRowsLoader colSpan={8} message="Loading line items from schedule…" />
+                    ) : (
+                    computedLines.map((line, idx) => (
                       <tr className={trHover} key={`${line.poLine}-${idx}`}>
                         <td className={`${tdBase} font-mono text-xs text-umerco-muted`}>{line.poLine}</td>
                         <td className={tdBase}>
@@ -580,7 +638,9 @@ export default function InvoicePage() {
                             value={line.uom}
                             onChange={(e) => updateLine(idx, "uom", e.target.value)}
                           >
-                            {UOM_OPTIONS.map((uom) => (
+                            {[line.uom, ...UOM_OPTIONS]
+                              .filter((uom, index, all) => uom && all.indexOf(uom) === index)
+                              .map((uom) => (
                               <option key={uom} value={uom}>
                                 {uom}
                               </option>
@@ -613,11 +673,11 @@ export default function InvoicePage() {
                           ) : null}
                         </td>
                       </tr>
-                    ))}
+                    ))
+                    )}
                   </tbody>
                 </table>
               </div>
-            )}
           </div>
 
           <div className="mt-4 flex justify-end">
@@ -711,5 +771,6 @@ export default function InvoicePage() {
 
       <SubmitRequestResponsePanel lastRequest={lastRequest} result={result} />
     </div>
+    </DocumentTypeGate>
   );
 }

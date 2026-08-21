@@ -1,7 +1,7 @@
 
 
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
   Bell,
   Building2,
@@ -17,6 +17,7 @@ import {
   User
 } from "lucide-react";
 import { Field } from "@/components/forms/Field";
+import { SupplierStatusBadge, supplierInitials } from "@/components/suppliers/SupplierStatusBadge";
 import { Loader } from "@/components/umerco/Loader";
 import { LoadingBlock } from "@/components/umerco/LoadingBlock";
 import { UmercoAlert } from "@/components/umerco/UmercoAlert";
@@ -24,7 +25,9 @@ import { UmercoSectionLabel } from "@/components/umerco/UmercoSectionLabel";
 import { useToast } from "@/components/umerco/toast";
 import { btnOutline, btnPrimary, btnSecondary, card, cardAccent, statusPill } from "@/components/umerco/styles";
 import { extractApiError } from "@/lib/api-error";
-import { getSupabase } from "@/lib/supabase";
+import { useAuth } from "@/context/auth-context";
+import { listSuppliers, getPortalMe, updatePortalProfile, type ManagedSupplier, type PortalMeUser } from "@/lib/master-portal-suppliers";
+import { paths } from "@/paths";
 import { apiRoutes, http } from "@/api";
 
 type SettingsData = {
@@ -106,7 +109,7 @@ const SECTIONS: {
   {
     id: "buyers",
     label: "Trading Partners",
-    description: "Buyers connected to your supplier account.",
+    description: "Suppliers and buyers connected to your account.",
     icon: Building2
   },
   {
@@ -307,17 +310,19 @@ function IntegrationCard({
 }
 
 export default function SettingsPage() {
-  const navigate = useNavigate();
-  const supabase = getSupabase();
+  const { logout, user, loading: authLoading, updateUser, signingOut } = useAuth();
   const toast = useToast();
 
   const [loading, setLoading] = useState(true);
+  const [portalProfile, setPortalProfile] = useState<PortalMeUser | null>(null);
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [buyers, setBuyers] = useState<Buyer[]>([]);
+  const [managedSuppliers, setManagedSuppliers] = useState<ManagedSupplier[]>([]);
   const [integration, setIntegration] = useState<IntegrationStatus | null>(null);
   const [activeSection, setActiveSection] = useState<SectionId>("profile");
 
   const [name, setName] = useState("");
+  const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
   const [deljitNotifications, setDeljitNotifications] = useState(true);
   const [defaultFacility, setDefaultFacility] = useState("");
@@ -344,6 +349,16 @@ export default function SettingsPage() {
   const [defaultsSave, setDefaultsSave] = useState<SaveState>({ saving: false, saved: false, error: null });
 
   const activeMeta = SECTIONS.find((section) => section.id === activeSection) ?? SECTIONS[0];
+  const isPartnerAdmin =
+    portalProfile?.actor === "partner_admin" || user?.actor === "partner_admin";
+  const displayName =
+    portalProfile?.business_partner_name ||
+    portalProfile?.full_name ||
+    settings?.name ||
+    "—";
+  const displayCode = portalProfile?.business_partner_code || settings?.code || "—";
+  const displayEmail = portalProfile?.email || settings?.authEmail || "—";
+  const roleLabel = isPartnerAdmin ? "Admin" : "Supplier";
 
   const applySettings = useCallback((data: SettingsData) => {
     setSettings(data);
@@ -361,34 +376,62 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
+    if (authLoading) return;
+
+    let cancelled = false;
+
     async function load() {
+      setLoading(true);
       try {
-        const [settingsRes, partnersRes, integrationRes] = await Promise.all([
-          http.get(apiRoutes.settings.root),
-          http.get(apiRoutes.settings.tradingPartners),
-          http.get(apiRoutes.settings.integrationStatus)
+        const me = await getPortalMe();
+        if (cancelled) return;
+        setPortalProfile(me);
+        setFullName(me.full_name ?? "");
+
+        const suppliersPromise =
+          me.actor === "partner_admin"
+            ? listSuppliers().catch(() => [] as ManagedSupplier[])
+            : Promise.resolve([] as ManagedSupplier[]);
+
+        const [suppliers, settingsRes, partnersRes, integrationRes] = await Promise.all([
+          suppliersPromise,
+          http.get(apiRoutes.settings.root).catch(() => null),
+          http.get(apiRoutes.settings.tradingPartners).catch(() => null),
+          http.get(apiRoutes.settings.integrationStatus).catch(() => null)
         ]);
 
-        if (settingsRes.ok) {
-          const data = (await settingsRes.json()) as SettingsData;
-          applySettings(data);
+        if (cancelled) return;
+
+        setManagedSuppliers(suppliers);
+
+        if (settingsRes?.ok) {
+          applySettings((await settingsRes.json()) as SettingsData);
         }
 
-        if (partnersRes.ok) {
+        if (partnersRes?.ok) {
           const data = (await partnersRes.json()) as { buyers: Buyer[] };
           setBuyers(data.buyers ?? []);
         }
 
-        if (integrationRes.ok) {
+        if (integrationRes?.ok) {
           setIntegration((await integrationRes.json()) as IntegrationStatus);
         }
+      } catch (err) {
+        if (!cancelled) {
+          const message =
+            err instanceof Error ? err.message : "Could not load account settings from Master Portal.";
+          toast.error(message);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
-    load();
-  }, [applySettings]);
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [applySettings, authLoading, toast]);
 
   const patchSettings = async (
     body: Record<string, unknown>,
@@ -416,29 +459,11 @@ export default function SettingsPage() {
   };
 
   const onChangePassword = async () => {
-    if (newPassword !== confirmPassword) {
-      toast.error("Passwords do not match");
-      return;
-    }
-    if (newPassword.length < 6) {
-      toast.error("Password must be at least 6 characters");
-      return;
-    }
-    setPasswordSaving(true);
-    const { error } = await supabase.auth.updateUser({ password: newPassword });
-    setPasswordSaving(false);
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-    toast.success("Password updated successfully");
-    setNewPassword("");
-    setConfirmPassword("");
+    toast.error("Password changes are managed through your organization administrator.");
   };
 
-  const onLogout = async () => {
-    await supabase.auth.signOut();
-    navigate("/login");
+  const onLogout = () => {
+    void logout();
   };
 
   if (loading) {
@@ -462,24 +487,22 @@ export default function SettingsPage() {
       <div className={`${cardAccent} p-5`}>
         <div className="flex flex-wrap items-center gap-4">
           <div className="surface-dark flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-lg font-semibold">
-            {initials(settings?.name ?? "Supplier")}
+            {initials(displayName !== "—" ? displayName : "Supplier")}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2.5">
-              <h3 className="text-lg font-semibold text-umerco-dark">{settings?.name || "—"}</h3>
-              {settings?.status ? (
-                <span className={statusPill(settings.status)}>{statusLabel(settings.status)}</span>
-              ) : null}
+              <h3 className="text-lg font-semibold text-umerco-dark">{displayName}</h3>
+              <span className={statusPill("active")}>{roleLabel}</span>
             </div>
-            <p className="mt-1 font-mono text-sm text-umerco-muted">{settings?.code || "—"}</p>
+            <p className="mt-1 font-mono text-sm text-umerco-muted">{displayCode}</p>
             <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-umerco-muted">
               <Mail className="h-3.5 w-3.5" strokeWidth={1.75} />
-              {settings?.authEmail || "—"}
+              {displayEmail}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <span className="rounded-full bg-umerco-beige px-3 py-1 text-xs font-medium text-umerco-dark">
-              {buyers.length} trading partner{buyers.length === 1 ? "" : "s"}
+              {`${portalProfile?.supplier_count ?? 0} supplier${(portalProfile?.supplier_count ?? 0) === 1 ? "" : "s"}`}
             </span>
             {integration ? (
               <span
@@ -507,28 +530,77 @@ export default function SettingsPage() {
               footer={
                 <SaveFooter
                   saveState={profileSave}
-                  onSave={() => patchSettings({ name, phone }, setProfileSave)}
+                  onSave={async () => {
+                    const nextName = fullName.trim();
+                    if (!nextName) {
+                      toast.error("Full name is required.");
+                      return;
+                    }
+                    setProfileSave({ saving: true, saved: false, error: null });
+                    try {
+                      const updated = await updatePortalProfile({ full_name: nextName });
+                      setPortalProfile(updated);
+                      setFullName(updated.full_name);
+                      updateUser({
+                        full_name: updated.full_name,
+                        mutually_defined_zz: updated.mutually_defined_zz,
+                        duns: updated.duns,
+                        as2: updated.as2,
+                        company_mutually_defined_zz: updated.company_mutually_defined_zz,
+                        company_duns: updated.company_duns,
+                        company_as2: updated.company_as2,
+                        channel_url: updated.channel_url,
+                        inbound_url: updated.inbound_url,
+                        comms_username: updated.comms_username,
+                        comms_password: updated.comms_password,
+                        document_types: updated.document_types,
+                        supplier_count: updated.supplier_count
+                      });
+                      setProfileSave({ saving: false, saved: true, error: null });
+                      toast.success("Full name saved.");
+                      setTimeout(() => setProfileSave((s) => ({ ...s, saved: false })), 2000);
+                    } catch (err) {
+                      const message =
+                        err instanceof Error ? err.message : "Could not save full name.";
+                      setProfileSave({ saving: false, saved: false, error: message });
+                      toast.error(message);
+                    }
+                  }}
                 />
               }
             >
               <div className="grid gap-4 md:grid-cols-2">
                 <Field label="Company Name">
                   <input
+                    className="umerco-input-readonly text-sm"
+                    value={portalProfile?.business_partner_name ?? ""}
+                    readOnly
+                  />
+                </Field>
+                <Field label="Partner Code">
+                  <input
+                    className="umerco-input-readonly font-mono text-sm"
+                    value={portalProfile?.business_partner_code ?? ""}
+                    readOnly
+                  />
+                </Field>
+                <Field label="Full Name">
+                  <input
                     className="umerco-input text-sm"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    autoComplete="name"
                   />
                 </Field>
                 <Field label="Sign-in Email">
-                  <input className="umerco-input-readonly" value={settings?.authEmail ?? ""} readOnly />
-                </Field>
-                <Field label="Phone">
                   <input
-                    className="umerco-input text-sm"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="+1 555 000 0000"
+                    className="umerco-input-readonly text-sm"
+                    value={portalProfile?.email ?? ""}
+                    readOnly
                   />
+                </Field>
+                <Field label="Role">
+                  <input className="umerco-input-readonly text-sm" value={roleLabel} readOnly />
                 </Field>
               </div>
 
@@ -589,10 +661,11 @@ export default function SettingsPage() {
                   <button
                     type="button"
                     className={`inline-flex items-center gap-2 ${btnOutline} border-red-200 text-red-700 hover:bg-red-50`}
+                    disabled={signingOut}
                     onClick={onLogout}
                   >
                     <LogOut className="h-4 w-4" strokeWidth={1.75} />
-                    Logout
+                    {signingOut ? "Signing out…" : "Logout"}
                   </button>
                 </div>
               </div>
@@ -626,41 +699,116 @@ export default function SettingsPage() {
           )}
 
           {activeSection === "buyers" && (
-            <SettingsPanel title={activeMeta.label} description={activeMeta.description}>
-              <p className="mb-4 text-sm text-umerco-muted">
-                Trading partners are managed by your administrator. The list below shows buyers currently
-                connected to your account.
-              </p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {buyers.map((buyer) => (
-                  <article key={buyer.key} className="schedule-panel p-4">
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-umerco-primary-soft text-umerco-primary">
-                        <Building2 className="h-5 w-5" strokeWidth={1.75} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-umerco-dark">{buyer.name}</p>
-                        <p className="mt-0.5 text-xs text-umerco-muted">EDI {buyer.ediVersion}</p>
-                      </div>
+            <SettingsPanel
+              title={isPartnerAdmin ? "Suppliers" : activeMeta.label}
+              description={
+                isPartnerAdmin
+                  ? "Supplier accounts under your business partner."
+                  : activeMeta.description
+              }
+            >
+              {isPartnerAdmin ? (
+                <>
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-sm text-umerco-muted">
+                      These are the supplier accounts you manage in the portal.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Link to={paths.suppliers.list} className={btnSecondary}>
+                        View all
+                      </Link>
+                      <Link to={paths.suppliers.create} className={btnPrimary}>
+                        Create supplier
+                      </Link>
                     </div>
-                    <div className="mt-4 flex flex-wrap gap-1.5">
-                      {buyer.documentTypes.map((doc) => (
-                        <span
-                          key={doc}
-                          className="rounded-md bg-umerco-beige px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-umerco-dark"
-                        >
-                          {doc}
-                        </span>
-                      ))}
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {managedSuppliers.map((supplier) => (
+                      <article key={supplier.id} className="schedule-panel p-4">
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-umerco-primary-soft text-sm font-semibold text-umerco-primary">
+                            {supplierInitials(supplier.full_name)}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="font-medium text-umerco-dark">{supplier.full_name}</p>
+                              <SupplierStatusBadge status={supplier.status} />
+                            </div>
+                            <p className="mt-0.5 truncate text-xs text-umerco-muted">{supplier.email}</p>
+                          </div>
+                        </div>
+                        <div className="mt-4">
+                          <Link
+                            to={paths.suppliers.edit(supplier.id)}
+                            className={`${btnOutline} inline-flex text-xs`}
+                          >
+                            Edit supplier
+                          </Link>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                  {managedSuppliers.length === 0 ? (
+                    <div className="mt-2 rounded-lg border border-dashed border-umerco-border bg-umerco-canvas/50 px-4 py-8 text-center text-sm text-umerco-muted">
+                      {(portalProfile?.supplier_count ?? 0) > 0 ? (
+                        <>
+                          {portalProfile?.supplier_count} supplier
+                          {(portalProfile?.supplier_count ?? 0) === 1 ? "" : "s"} in this company.{" "}
+                          <Link to={paths.suppliers.list} className="font-medium text-umerco-primary underline">
+                            View suppliers
+                          </Link>
+                          .
+                        </>
+                      ) : (
+                        <>
+                          No suppliers yet.{" "}
+                          <Link to={paths.suppliers.create} className="font-medium text-umerco-primary underline">
+                            Create your first supplier
+                          </Link>
+                          .
+                        </>
+                      )}
                     </div>
-                  </article>
-                ))}
-              </div>
-              {buyers.length === 0 ? (
-                <div className="mt-2 rounded-lg border border-dashed border-umerco-border bg-umerco-canvas/50 px-4 py-8 text-center text-sm text-umerco-muted">
-                  No connected buyers configured yet.
-                </div>
-              ) : null}
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <p className="mb-4 text-sm text-umerco-muted">
+                    Trading partners are managed by your administrator. The list below shows buyers currently
+                    connected to your account.
+                  </p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {buyers.map((buyer) => (
+                      <article key={buyer.key} className="schedule-panel p-4">
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-umerco-primary-soft text-umerco-primary">
+                            <Building2 className="h-5 w-5" strokeWidth={1.75} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="font-medium text-umerco-dark">{buyer.name}</p>
+                            <p className="mt-0.5 text-xs text-umerco-muted">EDI {buyer.ediVersion}</p>
+                          </div>
+                        </div>
+                        <div className="mt-4 flex flex-wrap gap-1.5">
+                          {buyer.documentTypes.map((doc) => (
+                            <span
+                              key={doc}
+                              className="rounded-md bg-umerco-beige px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-umerco-dark"
+                            >
+                              {doc}
+                            </span>
+                          ))}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                  {buyers.length === 0 ? (
+                    <div className="mt-2 rounded-lg border border-dashed border-umerco-border bg-umerco-canvas/50 px-4 py-8 text-center text-sm text-umerco-muted">
+                      No connected buyers configured yet.
+                    </div>
+                  ) : null}
+                </>
+              )}
             </SettingsPanel>
           )}
 
@@ -690,7 +838,11 @@ export default function SettingsPage() {
                   <Field label="Supplier Code">
                     <div className="relative">
                       <Lock className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-umerco-muted" />
-                      <input className="umerco-input-readonly pl-10 font-mono" value={settings?.code ?? ""} readOnly />
+                      <input
+                        className="umerco-input-readonly pl-10 font-mono"
+                        value={portalProfile?.business_partner_code ?? settings?.code ?? ""}
+                        readOnly
+                      />
                     </div>
                     <p className="mt-1 text-xs text-umerco-muted">
                       Used in all outbound EDI messages. Contact your administrator to change.

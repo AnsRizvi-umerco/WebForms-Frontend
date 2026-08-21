@@ -40,9 +40,13 @@ export default function EdifactPage() {
 
   if (loading) {
     return (
-      <div className="relative flex min-h-[calc(100dvh-9.5rem)] items-center justify-center">
-        <LoadingBlock message="Loading EDIFACT…" size="md" />
-      </div>
+      <>
+        <UmercoSectionLabel>EDIFACT</UmercoSectionLabel>
+        <h2 className="mb-4 text-xl font-semibold text-umerco-dark">EDIFACT (IWHI)</h2>
+        <div className={`${card} flex min-h-[12rem] items-center justify-center p-4`}>
+          <LoadingBlock message="Loading EDIFACT…" size="sm" className="py-0" />
+        </div>
+      </>
     );
   }
 

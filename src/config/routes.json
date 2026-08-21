@@ -15,5 +15,12 @@
     "integrationStatus": "/settings/integration-status"
   },
   "edifact": "/edifact",
-  "labels": "/labels"
+  "labels": "/labels",
+  "messageHub": "/message-hub",
+  "transactions": "/transactions",
+  "notifications": {
+    "list": "/notifications",
+    "readAll": "/notifications/read-all",
+    "readOne": "/notifications/:notificationId/read"
+  }
 }

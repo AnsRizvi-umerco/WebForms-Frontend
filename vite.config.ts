@@ -17,7 +17,6 @@ export default defineConfig({
       output: {
         manualChunks: {
           react: ["react", "react-dom", "react-router-dom"],
-          supabase: ["@supabase/supabase-js"],
           charts: ["apexcharts", "react-apexcharts"],
           i18n: ["i18next", "react-i18next"]
         }

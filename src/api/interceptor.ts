@@ -1,6 +1,6 @@
 import { getApiBaseUrl } from "@/api/config";
+import { clearAuthSession, getAccessToken } from "@/lib/auth";
 import { paths } from "@/paths";
-import { getSupabase } from "@/lib/supabase";
 
 export type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
@@ -55,14 +55,10 @@ function serializeBody(body: HttpRequestConfig["body"]): BodyInit | undefined {
 async function authRequestInterceptor(context: RequestContext): Promise<RequestContext> {
   if (context.skipAuth) return context;
 
-  const supabase = getSupabase();
-  const {
-    data: { session }
-  } = await supabase.auth.getSession();
-
+  const accessToken = getAccessToken();
   const headers = new Headers(context.headers);
-  if (session?.access_token) {
-    headers.set("Authorization", `Bearer ${session.access_token}`);
+  if (accessToken) {
+    headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
   return { ...context, headers };
@@ -87,7 +83,7 @@ async function unauthorizedResponseInterceptor(
     return response;
   }
 
-  await getSupabase().auth.signOut();
+  clearAuthSession();
   if (typeof window !== "undefined" && window.location.pathname !== paths.login) {
     window.location.assign(paths.login);
   }

@@ -2,28 +2,43 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { LoadingBlock } from "@/components/umerco/LoadingBlock";
+import { LoadingBlock, TableRowsLoader } from "@/components/umerco/LoadingBlock";
+import { UmercoAlert } from "@/components/umerco/UmercoAlert";
 import { btnDark, tableHeader } from "@/components/umerco/styles";
 import { useToastMessage } from "@/hooks/useToastMessage";
+import { DocumentTypeGate } from "@/components/forms/DocumentTypeGate";
 import { SubmitRequestResponsePanel } from "@/components/forms/SubmitRequestResponsePanel";
 import { useDocumentSubmit } from "@/components/forms/useDocumentSubmit";
 import { todayLocalIsoDateInput, toCompactYyyymmdd } from "@/lib/dates/compact";
+import {
+  isTestConnectionSearch,
+  TEST_BUYER_NAME,
+  TEST_DELJIT_REF,
+  TEST_FACILITY
+} from "@/lib/test-connection";
+import { useSessionEdiCodes } from "@/lib/session-edi";
 import { ScheduleFacilityFields } from "@/components/forms/ScheduleFacilityFields";
 import { primaryFacilityFromLines, uniqueFacilitiesFromLines } from "@/lib/facilities";
+import { mapAckPrefillFromOrder } from "@/lib/ack-prefill";
 import { resolveBuyerDisplayName, type SchedulePrefillMessage } from "@/lib/trading-partners";
 import { apiRoutes, http } from "@/api";
 
 type ScheduleLine = {
   lineNo: string;
   partNo: string;
+  description: string;
   qtyRequested: number;
   qtyAccepted: number;
   promisedDate: string;
+  uom: string;
+  unitPrice: string;
 };
 
 type ScheduleLinePrefill = {
   part_no: string;
+  description: string | null;
   qty_required: number;
+  uom: string;
   deliver_by: string;
   facility: string;
 };
@@ -35,6 +50,8 @@ type SchedulePrefillResponse = {
     trading_partner?: string | null;
   } | null;
   message: SchedulePrefillMessage | null;
+  purchaseOrder?: unknown;
+  canonical_json_raw?: unknown;
   lines: ScheduleLinePrefill[];
   error?: string;
 };
@@ -42,26 +59,36 @@ type SchedulePrefillResponse = {
 const EMPTY_SCHEDULE_LINE: ScheduleLine = {
   lineNo: "001",
   partNo: "",
+  description: "",
   qtyRequested: 0,
   qtyAccepted: 0,
-  promisedDate: todayLocalIsoDateInput()
+  promisedDate: todayLocalIsoDateInput(),
+  uom: "EA",
+  unitPrice: "0.00"
 };
 
 export default function ScheduleAckPage() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const scheduleId = params.get("schedule");
+  const isTest = isTestConnectionSearch(params);
+  const scheduleId = isTest ? null : params.get("schedule");
   const requiresSchedulePrefill = Boolean(scheduleId);
+  const { supplierCode, tradingPartner } = useSessionEdiCodes();
   const { pending, result, lastRequest, submit } = useDocumentSubmit();
   const userEditedRef = useRef(false);
   const appliedScheduleIdRef = useRef<string | null>(null);
   const [form, setForm] = useState({
-    supplierCode: "XYZ-PARTS",
+    supplierCode,
     supplierName: "XYZ Parts International Ltd.",
-    tradingPartner: "",
-    buyerCompanyName: "",
-    facility: "",
-    deljitReference: params.get("deljitRef") ?? params.get("scheduleRef") ?? "",
+    tradingPartner,
+    buyerCompanyName: isTest ? TEST_BUYER_NAME : "",
+    facility: isTest ? TEST_FACILITY : "",
+    deljitReference: isTest ? TEST_DELJIT_REF : params.get("deljitRef") ?? params.get("scheduleRef") ?? "",
+    poNumber: "",
+    poDate: "",
+    currency: "USD",
+    buyerId: "",
+    vendorId: "",
     responseDate: todayLocalIsoDateInput(),
     responseCode: "AC",
     scope: "FULL",
@@ -74,9 +101,12 @@ export default function ScheduleAckPage() {
           {
             lineNo: "001",
             partNo: "LC-BATT-4680",
+            description: "Battery Cell Module",
             qtyRequested: 500,
             qtyAccepted: 500,
-            promisedDate: todayLocalIsoDateInput()
+            promisedDate: todayLocalIsoDateInput(),
+            uom: "EA",
+            unitPrice: "100.00"
           }
         ]
   );
@@ -85,6 +115,14 @@ export default function ScheduleAckPage() {
   const [prefillError, setPrefillError] = useState<string | null>(null);
   const [prefillWarning, setPrefillWarning] = useState<string | null>(null);
   const isSchedulePrefillLocked = requiresSchedulePrefill && prefillLoading;
+
+  useEffect(() => {
+    setForm((prev) => ({
+      ...prev,
+      supplierCode,
+      tradingPartner
+    }));
+  }, [supplierCode, tradingPartner]);
 
   useToastMessage(prefillError, "error");
   useToastMessage(prefillWarning, "warning");
@@ -106,9 +144,12 @@ export default function ScheduleAckPage() {
       lines.map((line) => ({
         lineNo: line.lineNo,
         partNo: line.partNo,
+        description: line.description.trim() || line.partNo,
         qtyRequested: String(Math.max(0, Math.floor(Number(line.qtyRequested)) || 0)),
         qtyAccepted: String(Math.max(0, Math.floor(Number(line.qtyAccepted)) || 0)),
-        promisedDate: toCompactYyyymmdd(line.promisedDate)
+        promisedDate: toCompactYyyymmdd(line.promisedDate),
+        uom: line.uom,
+        unitPrice: line.unitPrice
       })),
     [lines]
   );
@@ -150,13 +191,34 @@ export default function ScheduleAckPage() {
           return;
         }
 
-        const nextLines = json.lines.map((line, index) => ({
-          lineNo: String(index + 1).padStart(3, "0"),
-          partNo: line.part_no,
-          qtyRequested: line.qty_required,
-          qtyAccepted: line.qty_required,
-          promisedDate: line.deliver_by
-        }));
+        const orderPrefill = mapAckPrefillFromOrder(json.purchaseOrder ?? json.canonical_json_raw);
+        const nextLines =
+          json.lines.length > 0
+            ? json.lines.map((line, index) => {
+                const matched =
+                  orderPrefill?.lines.find((entry) => entry.partNo === line.part_no) ??
+                  orderPrefill?.lines[index];
+                return {
+                  lineNo: matched?.poLine || String(index + 1).padStart(3, "0"),
+                  partNo: line.part_no,
+                  description: matched?.description || line.description?.trim() || line.part_no,
+                  qtyRequested: line.qty_required,
+                  qtyAccepted: line.qty_required,
+                  promisedDate: line.deliver_by,
+                  uom: matched?.uom || line.uom || "EA",
+                  unitPrice: matched?.unitPrice || "0.00"
+                };
+              })
+            : (orderPrefill?.lines ?? []).map((line) => ({
+                lineNo: line.poLine,
+                partNo: line.partNo,
+                description: line.description,
+                qtyRequested: line.qty,
+                qtyAccepted: line.qty,
+                promisedDate: todayLocalIsoDateInput(),
+                uom: line.uom,
+                unitPrice: line.unitPrice
+              }));
 
         const facilities = uniqueFacilitiesFromLines(json.lines);
         const partner =
@@ -165,9 +227,18 @@ export default function ScheduleAckPage() {
         setForm((prev) => ({
           ...prev,
           deljitReference: json.schedule?.deljit_ref ?? prev.deljitReference,
-          tradingPartner: partner,
-          buyerCompanyName: partner ? resolveBuyerDisplayName(partner) : prev.buyerCompanyName,
-          facility: primaryFacilityFromLines(json.lines)
+          poNumber: orderPrefill?.poNumber || json.schedule?.deljit_ref || prev.poNumber,
+          poDate: orderPrefill?.poDate || prev.poDate,
+          currency: orderPrefill?.currency || prev.currency,
+          buyerId: orderPrefill?.buyerId || prev.buyerId,
+          vendorId: orderPrefill?.vendorId || prev.vendorId,
+          buyerCompanyName: orderPrefill?.buyerCompanyName
+            ? resolveBuyerDisplayName(orderPrefill.buyerCompanyName)
+            : partner
+              ? resolveBuyerDisplayName(partner)
+              : prev.buyerCompanyName,
+          supplierName: orderPrefill?.vendorName || prev.supplierName,
+          facility: orderPrefill?.facility || primaryFacilityFromLines(json.lines)
         }));
         setLines(nextLines.length > 0 ? nextLines : [EMPTY_SCHEDULE_LINE]);
         if (nextLines.length === 0) {
@@ -199,6 +270,8 @@ export default function ScheduleAckPage() {
       tradingPartner: form.tradingPartner,
       payload: {
         deljitReference: form.deljitReference,
+        poNumber: form.poNumber.trim() || form.deljitReference,
+        ...(form.poDate.trim() ? { poDate: form.poDate.trim() } : {}),
         responseDate: toCompactYyyymmdd(form.responseDate),
         responseCode: form.responseCode,
         scope: form.scope,
@@ -206,13 +279,23 @@ export default function ScheduleAckPage() {
         facility: form.facility,
         supplierName: form.supplierName,
         buyerCompanyName: form.buyerCompanyName,
-        lines: form.scope === "PARTIAL" ? payloadLines : []
+        buyerId: form.buyerId.trim() || undefined,
+        vendorId: form.vendorId.trim() || undefined,
+        currency: form.currency || undefined,
+        usageIndicator: isTest ? "T" : "P",
+        lines: payloadLines
       }
     });
   };
 
   return (
+    <DocumentTypeGate messageType="APERAK">
     <div className="mx-auto max-w-6xl space-y-6 py-6">
+        {isTest ? (
+          <UmercoAlert variant="info">
+            Test connection — sample schedule acknowledgement payload. Submit sends to your channel URL.
+          </UmercoAlert>
+        ) : null}
         <button
           type="button"
           onClick={() => navigate("/schedules")}
@@ -270,9 +353,9 @@ export default function ScheduleAckPage() {
                 onChange={(e) => updateForm("supplierName", e.target.value)}
               />
               <input
-                className="umerco-input text-sm"
-                value={form.supplierCode}
-                onChange={(e) => updateForm("supplierCode", e.target.value)}
+                className="umerco-input-readonly font-mono text-sm"
+                value={form.supplierCode || "—"}
+                readOnly
               />
             </div>
           </div>
@@ -341,9 +424,6 @@ export default function ScheduleAckPage() {
               Affected Schedule Lines
             </h2>
             <div className="overflow-x-auto rounded-md border border-umerco-border">
-              {isSchedulePrefillLocked ? (
-                <LoadingBlock message="Loading line items from schedule…" />
-              ) : (
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className={tableHeader}>
@@ -355,7 +435,10 @@ export default function ScheduleAckPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-umerco-border">
-                  {lines.map((line, idx) => (
+                  {isSchedulePrefillLocked ? (
+                    <TableRowsLoader colSpan={5} message="Loading line items from schedule…" />
+                  ) : (
+                  lines.map((line, idx) => (
                     <tr key={`${line.lineNo}-${idx}`} className="hover:bg-umerco-beige">
                       <td className="px-3 py-2 font-mono text-xs text-umerco-muted">
                         {line.lineNo}
@@ -398,10 +481,10 @@ export default function ScheduleAckPage() {
                         />
                       </td>
                     </tr>
-                  ))}
+                  ))
+                  )}
                 </tbody>
               </table>
-              )}
             </div>
           </div>
         ) : null}
@@ -435,5 +518,6 @@ export default function ScheduleAckPage() {
 
         <SubmitRequestResponsePanel lastRequest={lastRequest} result={result} />
       </div>
+    </DocumentTypeGate>
   );
 }

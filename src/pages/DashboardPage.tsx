@@ -1,11 +1,11 @@
 
-
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { btnPrimary, card } from "@/components/umerco/styles";
 import { LoadingOverlay } from "@/components/umerco/LoadingOverlay";
 import { UmercoSectionLabel } from "@/components/umerco/UmercoSectionLabel";
 import { useToast } from "@/components/umerco/toast";
 import { apiRoutes, http, withQuery } from "@/api";
+import { useAuth } from "@/context/auth-context";
 
 const TransactionTrendChart = lazy(() =>
   import("@/components/dashboard/DashboardCharts").then((module) => ({
@@ -118,6 +118,8 @@ function serializeAppliedKey(args: FetchArgs): string {
 }
 
 export default function DashboardPage() {
+  const { user } = useAuth();
+  const isPartnerAdmin = user?.actor === "partner_admin";
   const useDummyData = readBooleanEnv(import.meta.env.VITE_USE_DUMMY_DASHBOARD_DATA);
   const toast = useToast();
   const [dashboardData, setDashboardData] = useState<DashboardPayload | null>(null);
@@ -311,11 +313,11 @@ export default function DashboardPage() {
 
       <div className="relative">
         {showLoadingOverlay && <LoadingOverlay message="Loading dashboard…" />}
-        <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <div className={`mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 ${isPartnerAdmin ? "lg:grid-cols-5" : "lg:grid-cols-4"}`}>
           {[
             {
               label: "Inbound MTD",
-              subtitle: "DELJIT receipts",
+              subtitle: null as string | null,
               value: String(kpis.inboundTransactionsMtd)
             },
             {
@@ -323,11 +325,19 @@ export default function DashboardPage() {
               subtitle: "Portal submissions",
               value: String(kpis.outboundTransactionsMtd)
             },
-            { label: "Active Trading Partners", subtitle: null, value: String(kpis.activeTradingPartners) },
-            { label: "Errors/Exceptions", subtitle: null, value: String(kpis.errorsExceptions) },
+            ...(isPartnerAdmin
+              ? [
+                  {
+                    label: "Active Trading Partners",
+                    subtitle: null as string | null,
+                    value: String(kpis.activeTradingPartners)
+                  }
+                ]
+              : []),
+            { label: "Errors/Exceptions", subtitle: null as string | null, value: String(kpis.errorsExceptions) },
             {
               label: "Avg Processing Time",
-              subtitle: null,
+              subtitle: null as string | null,
               value: `${kpis.avgProcessingTimeMinutes} min`
             }
           ].map((item) => (

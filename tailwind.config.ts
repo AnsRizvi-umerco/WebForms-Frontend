@@ -59,11 +59,21 @@ const config: Config = {
         "login-in": {
           from: { opacity: "0", transform: "translateY(16px)" },
           to: { opacity: "1", transform: "translateY(0)" }
+        },
+        "dropdown-in": {
+          from: { opacity: "0", transform: "translateY(-8px) scale(0.96)" },
+          to: { opacity: "1", transform: "translateY(0) scale(1)" }
+        },
+        "dropdown-out": {
+          from: { opacity: "1", transform: "translateY(0) scale(1)" },
+          to: { opacity: "0", transform: "translateY(-8px) scale(0.96)" }
         }
       },
       animation: {
         "detail-in": "detail-in 280ms ease-out",
-        "login-in": "login-in 520ms cubic-bezier(0.22, 1, 0.36, 1)"
+        "login-in": "login-in 520ms cubic-bezier(0.22, 1, 0.36, 1)",
+        "dropdown-in": "dropdown-in 200ms cubic-bezier(0.22, 1, 0.36, 1) both",
+        "dropdown-out": "dropdown-out 160ms ease-in both"
       }
     }
   },
