@@ -118,7 +118,10 @@ function zipStore(files: Record<string, string>): Blob {
     u16(0)
   ]);
 
-  return new Blob([concatBytes([...localParts, centralDirectory, endOfCentral])], {
+  const zipBytes = concatBytes([...localParts, centralDirectory, endOfCentral]);
+  const zipBuffer = new ArrayBuffer(zipBytes.byteLength);
+  new Uint8Array(zipBuffer).set(zipBytes);
+  return new Blob([zipBuffer], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
   });
 }

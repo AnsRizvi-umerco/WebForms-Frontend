@@ -206,7 +206,8 @@ export default function PoAckPage() {
         const json = (await response.json()) as SchedulePrefillResponse;
         if (cancelled) return;
 
-        if (!response.ok || !json.schedule) {
+        const schedule = json.schedule;
+        if (!response.ok || !schedule) {
           setPrefillError("Could not load selected schedule details for PO acknowledgement prefill.");
           return;
         }
@@ -257,7 +258,7 @@ export default function PoAckPage() {
               : prev.buyerCompanyName,
           supplierName: orderPrefill?.vendorName || prev.supplierName,
           facility: orderPrefill?.facility || primaryFacilityFromLines(json.lines),
-          poReference: orderPrefill?.poNumber || json.schedule.deljit_ref,
+          poReference: orderPrefill?.poNumber || schedule.deljit_ref,
           poDate: orderPrefill?.poDate || prev.poDate,
           currency: orderPrefill?.currency || prev.currency,
           buyerId: orderPrefill?.buyerId || prev.buyerId,
