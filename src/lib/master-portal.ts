@@ -1,12 +1,12 @@
 import { getApiBaseUrl } from "@/api/config";
 import { normalizePortalAuthUser, type AuthSession } from "@/lib/auth";
 
+const PRODUCTION_MASTER_PORTAL_BASE_URL =
+  "https://master-portal-services-v1-sepia.vercel.app";
+
 export function getMasterPortalBaseUrl(): string {
   const fromEnv = import.meta.env.VITE_MASTER_PORTAL_BASE_URL?.trim();
-  if (!fromEnv) {
-    throw new Error("Missing VITE_MASTER_PORTAL_BASE_URL");
-  }
-  return fromEnv.replace(/\/$/, "");
+  return (fromEnv || PRODUCTION_MASTER_PORTAL_BASE_URL).replace(/\/$/, "");
 }
 
 export function outboundApiUrl(companyId: string, supplierId: string): string {
