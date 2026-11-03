@@ -54,6 +54,7 @@ type ScheduleSummary = {
   supplier_name?: string | null;
   supplier_code?: string | null;
   supplier_email?: string | null;
+  sent_docs?: string[];
 };
 
 type ScheduleListResponse = {
@@ -152,6 +153,7 @@ type ScheduleDetailResponse = {
     supplier_name?: string | null;
     supplier_code?: string | null;
     supplier_email?: string | null;
+    sent_docs?: string[];
   } | null;
   lines: ScheduleLineRow[];
   message: DeljitMessage | null;
@@ -175,6 +177,51 @@ function statusLabel(status: string) {
   if (status === "acknowledged") return "Acknowledged";
   if (status === "pending") return "Pending";
   return status;
+}
+
+function normalizeSentDocs(docs: string[] | null | undefined): string[] {
+  return (docs ?? []).map((doc) => doc.trim().toUpperCase()).filter(Boolean);
+}
+
+function sentDocFlags(schedule: { status: string; sent_docs?: string[] | null }) {
+  const docs = new Set(normalizeSentDocs(schedule.sent_docs));
+  return {
+    ack: docs.has("ORDRSP") || docs.has("APERAK") || schedule.status === "acknowledged",
+    asn: docs.has("DESADV"),
+    invoice: docs.has("INVOIC") || schedule.status === "invoice_sent"
+  };
+}
+
+type SentDocBadge = { key: "ack" | "asn" | "invoice"; label: string; className: string };
+
+function sentDocBadges(schedule: { status: string; sent_docs?: string[] | null }): SentDocBadge[] {
+  const flags = sentDocFlags(schedule);
+  const badges: SentDocBadge[] = [];
+  if (flags.ack) {
+    badges.push({ key: "ack", label: "Ack", className: "doc-sent-badge doc-sent-badge-ack" });
+  }
+  if (flags.asn) {
+    badges.push({ key: "asn", label: "ASN", className: "doc-sent-badge doc-sent-badge-asn" });
+  }
+  if (flags.invoice) {
+    badges.push({ key: "invoice", label: "Invoice", className: "doc-sent-badge doc-sent-badge-invoice" });
+  }
+  return badges;
+}
+
+function SentDocBadges({ schedule }: { schedule: { status: string; sent_docs?: string[] | null } }) {
+  const badges = sentDocBadges(schedule);
+  if (badges.length === 0) return null;
+
+  return (
+    <>
+      {badges.map((badge) => (
+        <span key={badge.key} className={badge.className}>
+          {badge.label}
+        </span>
+      ))}
+    </>
+  );
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -639,10 +686,20 @@ export function SchedulesBoard() {
   };
 
   const scheduleStats = useMemo(() => {
-    const pending = schedules.filter((schedule) => schedule.status === "pending").length;
-    const acknowledged = schedules.filter((schedule) => schedule.status === "acknowledged").length;
-    const invoiceSent = schedules.filter((schedule) => schedule.status === "invoice_sent").length;
-    return { total: schedules.length, pending, acknowledged, invoiceSent };
+    let pending = 0;
+    let acknowledged = 0;
+    let asnSent = 0;
+    let invoiceSent = 0;
+
+    for (const schedule of schedules) {
+      const flags = sentDocFlags(schedule);
+      if (schedule.status === "pending") pending += 1;
+      if (flags.ack) acknowledged += 1;
+      if (flags.asn) asnSent += 1;
+      if (flags.invoice) invoiceSent += 1;
+    }
+
+    return { total: schedules.length, pending, acknowledged, asnSent, invoiceSent };
   }, [schedules]);
 
   return (
@@ -836,11 +893,12 @@ export function SchedulesBoard() {
         </div>
       </Collapse>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <StatCard label="Total" value={scheduleStats.total} />
         <StatCard label="Pending" value={scheduleStats.pending} tone="pending" />
-        <StatCard label="Acknowledged" value={scheduleStats.acknowledged} tone="acknowledged" />
-        <StatCard label="Invoice sent" value={scheduleStats.invoiceSent} tone="invoice_sent" />
+        <StatCard label="Ack" value={scheduleStats.acknowledged} tone="acknowledged" />
+        <StatCard label="ASN" value={scheduleStats.asnSent} tone="asn" />
+        <StatCard label="Invoice" value={scheduleStats.invoiceSent} tone="invoice_sent" />
       </div>
 
       {listFetchError ? (
@@ -883,6 +941,7 @@ export function SchedulesBoard() {
         const panelOpen = isOpen && !isClosing;
         const showPanel = isOpen;
         const detailPanelId = `schedule-detail-${schedule.id}`;
+        const outboundBadges = sentDocBadges(schedule);
 
         return (
           <div
@@ -904,7 +963,11 @@ export function SchedulesBoard() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="font-mono text-sm font-semibold text-umerco-dark">{schedule.deljit_ref}</p>
-                      <span className={statusPill(schedule.status)}>{statusLabel(schedule.status)}</span>
+                      {outboundBadges.length > 0 ? (
+                        <SentDocBadges schedule={schedule} />
+                      ) : (
+                        <span className={statusPill(schedule.status)}>{statusLabel(schedule.status)}</span>
+                      )}
                     </div>
                     <p className="mt-1 text-sm text-umerco-muted">
                       {formatPeriod(schedule.period_start, schedule.period_end)}
@@ -974,6 +1037,8 @@ export function SchedulesBoard() {
                       label="Create ASN"
                       to={`/submit/asn?schedule=${schedule.id}`}
                       variant="primary"
+                      disabled={sentDocFlags(schedule).asn}
+                      disabledTitle="ASN already sent. The shipping label is in Shipping Labels."
                     />
                   ) : null}
                   {isDocumentTypeAllowed(user, "INVOIC") ? (
@@ -1257,7 +1322,10 @@ function DeljitDetailBody({
         <SectionSubtitle>Portal record, trading partners, and schedule window.</SectionSubtitle>
         <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-3 md:grid-cols-3 lg:grid-cols-4">
           <OverviewField label="Reference" mono>
-            {schedule.deljit_ref}
+            <span className="inline-flex flex-wrap items-center gap-1.5">
+              <span>{schedule.deljit_ref}</span>
+              <SentDocBadges schedule={schedule} />
+            </span>
           </OverviewField>
           <OverviewField label="Period">
             {schedule.period_start} to {schedule.period_end}
@@ -1471,13 +1539,15 @@ function StatCard({
 }: {
   label: string;
   value: number;
-  tone?: "default" | "pending" | "acknowledged" | "completed" | "invoice_sent";
+  tone?: "default" | "pending" | "acknowledged" | "completed" | "invoice_sent" | "asn";
 }) {
   const toneClass =
     tone === "pending"
       ? "text-umerco-muted"
       : tone === "acknowledged"
         ? "text-umerco-primary"
+        : tone === "asn"
+          ? "text-violet-700"
         : tone === "completed" || tone === "invoice_sent"
           ? "text-umerco-success"
           : "text-umerco-dark";
@@ -1494,15 +1564,32 @@ function ScheduleActionLink({
   icon,
   label,
   to,
-  variant
+  variant,
+  disabled,
+  disabledTitle
 }: {
   icon: React.ReactNode;
   label: string;
   to: string;
   variant: "primary" | "secondary" | "outline";
+  disabled?: boolean;
+  disabledTitle?: string;
 }) {
   const variantClass =
     variant === "primary" ? btnPrimary : variant === "outline" ? btnOutline : btnSecondary;
+
+  if (disabled) {
+    return (
+      <span
+        title={disabledTitle}
+        aria-disabled="true"
+        className={`${variantClass} cursor-not-allowed gap-2 px-3 py-2.5 text-xs opacity-50 sm:text-sm`}
+      >
+        {icon}
+        <span className="truncate">{label}</span>
+      </span>
+    );
+  }
 
   return (
     <Link className={`${variantClass} gap-2 px-3 py-2.5 text-xs transition-all duration-200 ease-out sm:text-sm`} to={to}>

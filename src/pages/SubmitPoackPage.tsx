@@ -9,7 +9,7 @@ import { useToastMessage } from "@/hooks/useToastMessage";
 import { DocumentTypeGate } from "@/components/forms/DocumentTypeGate";
 import { SubmitRequestResponsePanel } from "@/components/forms/SubmitRequestResponsePanel";
 import { useDocumentSubmit } from "@/components/forms/useDocumentSubmit";
-import { todayLocalIsoDateInput, toCompactYyyymmdd } from "@/lib/dates/compact";
+import { todayLocalIsoDateInput, toCompactYyyymmdd, toDateInputValue } from "@/lib/dates/compact";
 import { isTestConnectionSearch, TEST_BUYER_NAME, TEST_FACILITY } from "@/lib/test-connection";
 import { useSessionEdiCodes } from "@/lib/session-edi";
 import { ScheduleFacilityFields } from "@/components/forms/ScheduleFacilityFields";
@@ -225,7 +225,7 @@ export default function PoAckPage() {
                 description: line.description,
                 qtyOrdered: line.qty,
                 qtyConfirmed: line.qty,
-                promisedDate: json.lines[index]?.deliver_by || todayLocalIsoDateInput(),
+                promisedDate: toDateInputValue(json.lines[index]?.deliver_by || todayLocalIsoDateInput()),
                 responseCode: "AC" as const,
                 reasonCode: "NONE",
                 uom: line.uom,
@@ -237,7 +237,7 @@ export default function PoAckPage() {
                 description: "",
                 qtyOrdered: line.qty_required,
                 qtyConfirmed: line.qty_required,
-                promisedDate: line.deliver_by,
+                promisedDate: toDateInputValue(line.deliver_by),
                 responseCode: "AC" as const,
                 reasonCode: "NONE",
                 uom: "EA",
@@ -293,7 +293,7 @@ export default function PoAckPage() {
       tradingPartner: header.tradingPartner,
       payload: {
         poReference: header.poReference,
-        ...(header.poDate.trim() ? { poDate: header.poDate.trim() } : {}),
+        ...(header.poDate.trim() ? { poDate: toCompactYyyymmdd(header.poDate) } : {}),
         responseDate: toCompactYyyymmdd(header.responseDate),
         facility: header.facility,
         supplierName: header.supplierName,

@@ -1,6 +1,7 @@
 import Chart from "react-apexcharts";
 import type { ApexOptions } from "apexcharts";
 import { chartInbound, chartOutbound, docMixPieColor } from "@/components/umerco/styles";
+import { outboundDocumentLabel } from "@/lib/document-types";
 
 type TrendPoint = {
   bucketKey: string;
@@ -95,7 +96,7 @@ export function DocMixChart({ data }: { data: DocMixPoint[] }) {
       type: "donut"
     },
     colors,
-    labels: data.map((entry) => entry.name),
+    labels: data.map((entry) => outboundDocumentLabel(entry.name)),
     stroke: {
       width: 2,
       colors: ["#ffffff"]

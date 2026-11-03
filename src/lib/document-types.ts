@@ -3,6 +3,18 @@ import { SUPPLIER_DOCUMENT_TYPES, type SupplierDocumentType } from "@/lib/master
 
 export type OutboundDocumentType = SupplierDocumentType;
 
+const DOCUMENT_LABELS: Record<string, string> = {
+  ORDRSP: "PO Acknowledgment",
+  INVOIC: "Invoice",
+  DESADV: "ASN",
+  APERAK: "PO Schedule"
+};
+
+export function outboundDocumentLabel(messageType: string): string {
+  const key = messageType.trim().toUpperCase();
+  return DOCUMENT_LABELS[key] || messageType.trim() || "Document";
+}
+
 export function isDocumentTypeAllowed(
   user: PortalAuthUser | null | undefined,
   messageType: string

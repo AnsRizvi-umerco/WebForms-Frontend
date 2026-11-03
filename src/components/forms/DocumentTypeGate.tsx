@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/context/auth-context";
 import { UmercoAlert } from "@/components/umerco/UmercoAlert";
 import { btnSecondary } from "@/components/umerco/styles";
-import { isDocumentTypeAllowed } from "@/lib/document-types";
+import { isDocumentTypeAllowed, outboundDocumentLabel } from "@/lib/document-types";
 import { isTestConnectionSearch } from "@/lib/test-connection";
 import { paths } from "@/paths";
 
@@ -21,7 +21,7 @@ export function DocumentTypeGate({
     return (
       <div className="mx-auto max-w-3xl space-y-4 py-10">
         <UmercoAlert variant="error">
-          {messageType} is not enabled for this supplier. Ask your partner administrator to add it
+          {outboundDocumentLabel(messageType)} is not enabled for this supplier. Ask your partner administrator to add it
           under document types.
         </UmercoAlert>
         <Link to={paths.schedules} className={`${btnSecondary} inline-flex text-sm`}>

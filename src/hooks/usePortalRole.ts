@@ -14,7 +14,7 @@ export function usePortalRole() {
   const [resolvedActor, setResolvedActor] = useState<PortalActor | null>(() =>
     resolvePortalActor(user)
   );
-  const [roleReady, setRoleReady] = useState(false);
+  const [roleReady, setRoleReady] = useState(() => Boolean(resolvePortalActor(user)));
 
   useEffect(() => {
     if (!user) {
@@ -24,7 +24,9 @@ export function usePortalRole() {
     }
 
     setResolvedActor(resolvePortalActor(user));
-    setRoleReady(false);
+    if (!resolvePortalActor(user)) {
+      setRoleReady(false);
+    }
 
     let cancelled = false;
 

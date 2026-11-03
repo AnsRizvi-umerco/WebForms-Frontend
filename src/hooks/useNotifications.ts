@@ -100,6 +100,8 @@ export function useNotifications(pollMs = 5000) {
   }, [isAuthenticated, load, pollMs]);
 
   const markAllRead = useCallback(async () => {
+    setUnreadCount(0);
+    setItems((prev) => prev.map((item) => ({ ...item, unread: false })));
     try {
       await http.patch(apiRoutes.notifications.readAll);
     } catch {

@@ -4,12 +4,16 @@ import { useToast } from "@/components/umerco/toast";
 import { useAuth } from "@/context/auth-context";
 import { extractApiError, isApiSuccess } from "@/lib/api-error";
 import { ediCodesFromSession } from "@/lib/session-edi";
+import { outboundDocumentLabel } from "@/lib/document-types";
 
 function getSubmitSuccessMessage(body: unknown): string {
   if (body && typeof body === "object" && "messageType" in body) {
-    const messageType = String((body as { messageType?: string }).messageType ?? "").trim();
+    const messageType = String((body as { messageType?: string }).messageType ?? "").trim().toUpperCase();
+    if (messageType === "DESADV") {
+      return "ASN submitted successfully. A shipping label was created in Shipping Labels.";
+    }
     if (messageType) {
-      return `${messageType} submitted successfully.`;
+      return `${outboundDocumentLabel(messageType)} submitted successfully.`;
     }
   }
   return "Document submitted successfully.";

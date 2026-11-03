@@ -42,7 +42,7 @@ export function PortalTopHeader({
   const langRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
   const notificationsRef = useRef<HTMLDivElement>(null);
-  const { items: notificationItems, unreadCount, markAllRead, markOneRead, reload } =
+  const { items: notificationItems, unreadCount, markAllRead, markOneRead } =
     useNotifications();
   const notificationsMounted = useMountedOpen(notificationsOpen, 180);
   const langMounted = useMountedOpen(langOpen, 180);
@@ -185,7 +185,7 @@ export function PortalTopHeader({
               onClick={() => {
                 setNotificationsOpen((open) => {
                   const next = !open;
-                  if (next) void reload();
+                  if (next) void markAllRead();
                   return next;
                 });
                 setLangOpen(false);

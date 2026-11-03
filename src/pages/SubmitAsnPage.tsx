@@ -1,11 +1,12 @@
 
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { LoadingBlock, TableRowsLoader } from "@/components/umerco/LoadingBlock";
 import { UmercoAlert } from "@/components/umerco/UmercoAlert";
 import { btnDark, tableHeader } from "@/components/umerco/styles";
 import { useToastMessage } from "@/hooks/useToastMessage";
+import { Field } from "@/components/forms/Field";
 import { DocumentTypeGate } from "@/components/forms/DocumentTypeGate";
 import { SubmitRequestResponsePanel } from "@/components/forms/SubmitRequestResponsePanel";
 import { useDocumentSubmit } from "@/components/forms/useDocumentSubmit";
@@ -16,6 +17,7 @@ import { apiRoutes, http } from "@/api";
 import { ScheduleFacilityFields } from "@/components/forms/ScheduleFacilityFields";
 import { primaryFacilityFromLines, uniqueFacilitiesFromLines } from "@/lib/facilities";
 import { mapAsnPrefillFromOrder } from "@/lib/asn-prefill";
+import { paths } from "@/paths";
 import { resolveBuyerDisplayName, type SchedulePrefillMessage } from "@/lib/trading-partners";
 
 type AsnLine = {
@@ -43,6 +45,7 @@ type SchedulePrefillResponse = {
     id: string;
     deljit_ref: string;
     trading_partner?: string | null;
+    sent_docs?: string[];
   } | null;
   message: SchedulePrefillMessage | null;
   purchaseOrder?: unknown;
@@ -86,6 +89,15 @@ const TRANSPORT_MODES = ["TRUCK", "AIR", "SEA", "RAIL"];
 const UOM_OPTIONS = ["EA", "KG", "LB", "M", "FT", "L", "GAL", "PCS", "SET"];
 const CONTAINER_OPTIONS = ["PALLET", "CRATE", "BOX"];
 const PACKAGE_TYPES = ["PALLET", "CARTON", "CRATE", "TOTE"];
+const WEIGHT_UOMS = ["LB", "KG"];
+const DIMENSION_UOMS = ["IN", "CM", "FT", "M"];
+
+function optionalDecimal(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) && parsed >= 0 ? String(parsed) : undefined;
+}
 
 export default function SubmitAsnPage() {
   const navigate = useNavigate();
@@ -112,10 +124,15 @@ export default function SubmitAsnPage() {
     shipToFacility: isTest ? TEST_FACILITY : "",
     shipToId: "",
     shipFromId: "",
-    packageCount: 1,
+    packageCount: "1",
     packageType: "PALLET",
-    grossWeight: 0,
-    netWeight: 0,
+    grossWeight: "",
+    netWeight: "",
+    weightUom: "LB",
+    length: "",
+    width: "",
+    height: "",
+    dimensionUom: "IN",
     notes: "",
     supplierCode
   });
@@ -139,6 +156,7 @@ export default function SubmitAsnPage() {
   const [prefillLoading, setPrefillLoading] = useState(requiresSchedulePrefill);
   const [prefillError, setPrefillError] = useState<string | null>(null);
   const [prefillWarning, setPrefillWarning] = useState<string | null>(null);
+  const [asnAlreadySent, setAsnAlreadySent] = useState(false);
   const isSchedulePrefillLocked = requiresSchedulePrefill && prefillLoading;
 
   useEffect(() => {
@@ -154,8 +172,6 @@ export default function SubmitAsnPage() {
 
   const payload = useMemo(() => {
     const pkg = Math.max(1, Math.floor(Number(form.packageCount)) || 1);
-    const gw = Number(form.grossWeight);
-    const nw = Number(form.netWeight);
     return {
       supplierName: form.supplierName,
       buyerCompanyName: form.buyerCompanyName,
@@ -172,8 +188,16 @@ export default function SubmitAsnPage() {
       usageIndicator: isTest ? "T" : "P",
       packageCount: String(pkg),
       packageType: form.packageType,
-      grossWeight: (Number.isFinite(gw) ? gw : 0).toString(),
-      netWeight: (Number.isFinite(nw) ? nw : 0).toString(),
+      grossWeight: optionalDecimal(form.grossWeight) ?? "0",
+      netWeight: optionalDecimal(form.netWeight) ?? "0",
+      weightUom: form.weightUom,
+      length: optionalDecimal(form.length),
+      width: optionalDecimal(form.width),
+      height: optionalDecimal(form.height),
+      dimensionUom:
+        optionalDecimal(form.length) || optionalDecimal(form.width) || optionalDecimal(form.height)
+          ? form.dimensionUom
+          : undefined,
       notes: form.notes,
       lines: lines.map((line, idx) => ({
         poNumber: line.poNumber.trim() || poPlaceholder(form.asnRef.trim() || "ASN", idx),
@@ -272,6 +296,7 @@ export default function SubmitAsnPage() {
     setPrefillLoading(true);
     setPrefillError(null);
     setPrefillWarning(null);
+    setAsnAlreadySent(false);
 
     const fetchSchedulePrefill = async () => {
       try {
@@ -285,6 +310,12 @@ export default function SubmitAsnPage() {
           return;
         }
 
+        if (
+          (schedule.sent_docs ?? []).some((doc) => doc.trim().toUpperCase() === "DESADV")
+        ) {
+          setAsnAlreadySent(true);
+        }
+
         if (userEditedRef.current) {
           setPrefillWarning("Schedule prefill was skipped because you already started editing this ASN.");
           return;
@@ -295,7 +326,7 @@ export default function SubmitAsnPage() {
         const nextLines =
           orderPrefill && orderPrefill.lines.length > 0
             ? orderPrefill.lines.map((line) => ({
-                poNumber: line.poNumber || poPlaceholder(deljitRef, 0),
+                poNumber: line.poNumber || deljitRef || poPlaceholder(deljitRef, 0),
                 poLine: line.poLine,
                 partNo: line.partNo,
                 description: line.description,
@@ -305,7 +336,7 @@ export default function SubmitAsnPage() {
                 poDate: line.poDate
               }))
             : json.lines.map((line, index) => ({
-                poNumber: poPlaceholder(deljitRef, index),
+                poNumber: deljitRef || poPlaceholder(deljitRef, index),
                 poLine: String(index + 1).padStart(3, "0"),
                 partNo: line.part_no,
                 description: line.description?.trim() || line.part_no,
@@ -381,6 +412,15 @@ export default function SubmitAsnPage() {
             Draft
           </span>
         </div>
+        {asnAlreadySent ? (
+          <UmercoAlert variant="info">
+            ASN already sent. The shipping label is in{" "}
+            <Link className="font-medium text-umerco-primary underline" to={paths.labels}>
+              Shipping Labels
+            </Link>
+            .
+          </UmercoAlert>
+        ) : null}
         {prefillLoading ? (
           <LoadingBlock variant="banner" message="Loading selected schedule line items…" />
         ) : null}
@@ -450,36 +490,44 @@ export default function SubmitAsnPage() {
             Shipment Identity
           </h2>
           <div className="grid gap-4 md:grid-cols-4">
-            <input
-              className="umerco-input text-sm"
-              value={form.asnRef}
-              onChange={(e) => updateForm("asnRef", e.target.value)}
-              placeholder="ASN Reference *"
-            />
-            <input
-              type="date"
-              className="umerco-input text-sm"
-              value={form.shipDate}
-              onChange={(e) => updateForm("shipDate", e.target.value)}
-            />
-            <input
-              type="time"
-              className="umerco-input text-sm"
-              value={form.shipTime}
-              onChange={(e) => updateForm("shipTime", e.target.value)}
-            />
-            <select
-              className="umerco-input text-sm"
-              value={form.transportMode}
-              onChange={(e) => updateForm("transportMode", e.target.value)}
-            >
-              <option value="">— Select —</option>
-              {TRANSPORT_MODES.map((mode) => (
-                <option key={mode} value={mode}>
-                  {mode}
-                </option>
-              ))}
-            </select>
+            <Field label="ASN Number *">
+              <input
+                className="umerco-input text-sm"
+                value={form.asnRef}
+                onChange={(e) => updateForm("asnRef", e.target.value)}
+                placeholder="e.g. ASN-2026-0001"
+              />
+            </Field>
+            <Field label="Ship Date *">
+              <input
+                type="date"
+                className="umerco-input text-sm"
+                value={form.shipDate}
+                onChange={(e) => updateForm("shipDate", e.target.value)}
+              />
+            </Field>
+            <Field label="Ship Time">
+              <input
+                type="time"
+                className="umerco-input text-sm"
+                value={form.shipTime}
+                onChange={(e) => updateForm("shipTime", e.target.value)}
+              />
+            </Field>
+            <Field label="Transport Mode *">
+              <select
+                className="umerco-input text-sm"
+                value={form.transportMode}
+                onChange={(e) => updateForm("transportMode", e.target.value)}
+              >
+                <option value="">Select mode</option>
+                {TRANSPORT_MODES.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {mode}
+                  </option>
+                ))}
+              </select>
+            </Field>
           </div>
         </div>
 
@@ -488,24 +536,30 @@ export default function SubmitAsnPage() {
             Transport Details
           </h2>
           <div className="grid gap-4 md:grid-cols-3">
-            <input
-              className="umerco-input text-sm"
-              value={form.carrier}
-              onChange={(e) => updateForm("carrier", e.target.value)}
-              placeholder="Carrier"
-            />
-            <input
-              className="umerco-input text-sm"
-              value={form.trackingNo}
-              onChange={(e) => updateForm("trackingNo", e.target.value)}
-              placeholder="Tracking Number"
-            />
-            <input
-              className="umerco-input text-sm"
-              value={form.bolNumber}
-              onChange={(e) => updateForm("bolNumber", e.target.value)}
-              placeholder="Bill of Lading"
-            />
+            <Field label="Carrier">
+              <input
+                className="umerco-input text-sm"
+                value={form.carrier}
+                onChange={(e) => updateForm("carrier", e.target.value)}
+                placeholder="Carrier name"
+              />
+            </Field>
+            <Field label="Tracking Number">
+              <input
+                className="umerco-input text-sm"
+                value={form.trackingNo}
+                onChange={(e) => updateForm("trackingNo", e.target.value)}
+                placeholder="Tracking number"
+              />
+            </Field>
+            <Field label="Bill of Lading">
+              <input
+                className="umerco-input text-sm"
+                value={form.bolNumber}
+                onChange={(e) => updateForm("bolNumber", e.target.value)}
+                placeholder="BOL number"
+              />
+            </Field>
           </div>
         </div>
 
@@ -513,42 +567,113 @@ export default function SubmitAsnPage() {
           <h2 className="mb-4 umerco-section-label">
             Packaging Details
           </h2>
-          <div className="grid gap-4 md:grid-cols-4">
-            <input
-              type="number"
-              min={1}
-              className="umerco-input text-sm"
-              value={form.packageCount}
-              onChange={(e) => updateForm("packageCount", e.target.value)}
-              placeholder="Package Count"
-            />
-            <select
-              className="umerco-input text-sm"
-              value={form.packageType}
-              onChange={(e) => updateForm("packageType", e.target.value)}
-            >
-              {PACKAGE_TYPES.map((type) => (
-                <option key={type} value={type}>
-                  {type}
-                </option>
-              ))}
-            </select>
-            <input
-              type="number"
-              min={0}
-              className="umerco-input text-sm"
-              value={form.grossWeight}
-              onChange={(e) => updateForm("grossWeight", e.target.value)}
-              placeholder="Gross Weight"
-            />
-            <input
-              type="number"
-              min={0}
-              className="umerco-input text-sm"
-              value={form.netWeight}
-              onChange={(e) => updateForm("netWeight", e.target.value)}
-              placeholder="Net Weight"
-            />
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <Field label="Package Count *">
+              <input
+                type="number"
+                min={1}
+                className="umerco-input text-sm"
+                value={form.packageCount}
+                onChange={(e) => updateForm("packageCount", e.target.value)}
+                placeholder="e.g. 1"
+              />
+            </Field>
+            <Field label="Package Type">
+              <select
+                className="umerco-input text-sm"
+                value={form.packageType}
+                onChange={(e) => updateForm("packageType", e.target.value)}
+              >
+                {PACKAGE_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Gross Weight">
+              <input
+                type="number"
+                min={0}
+                step="any"
+                className="umerco-input text-sm"
+                value={form.grossWeight}
+                onChange={(e) => updateForm("grossWeight", e.target.value)}
+                placeholder="e.g. 250"
+              />
+            </Field>
+            <Field label="Net Weight">
+              <input
+                type="number"
+                min={0}
+                step="any"
+                className="umerco-input text-sm"
+                value={form.netWeight}
+                onChange={(e) => updateForm("netWeight", e.target.value)}
+                placeholder="e.g. 240"
+              />
+            </Field>
+            <Field label="Weight UOM">
+              <select
+                className="umerco-input text-sm"
+                value={form.weightUom}
+                onChange={(e) => updateForm("weightUom", e.target.value)}
+              >
+                {WEIGHT_UOMS.map((uom) => (
+                  <option key={uom} value={uom}>
+                    {uom}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Field label="Length">
+              <input
+                type="number"
+                min={0}
+                step="any"
+                className="umerco-input text-sm"
+                value={form.length}
+                onChange={(e) => updateForm("length", e.target.value)}
+                placeholder="e.g. 48"
+              />
+            </Field>
+            <Field label="Width">
+              <input
+                type="number"
+                min={0}
+                step="any"
+                className="umerco-input text-sm"
+                value={form.width}
+                onChange={(e) => updateForm("width", e.target.value)}
+                placeholder="e.g. 40"
+              />
+            </Field>
+            <Field label="Height">
+              <input
+                type="number"
+                min={0}
+                step="any"
+                className="umerco-input text-sm"
+                value={form.height}
+                onChange={(e) => updateForm("height", e.target.value)}
+                placeholder="e.g. 36"
+              />
+            </Field>
+            <Field label="Dimension UOM">
+              <select
+                className="umerco-input text-sm"
+                value={form.dimensionUom}
+                onChange={(e) => updateForm("dimensionUom", e.target.value)}
+              >
+                {DIMENSION_UOMS.map((uom) => (
+                  <option key={uom} value={uom}>
+                    {uom}
+                  </option>
+                ))}
+              </select>
+            </Field>
           </div>
         </div>
 
@@ -653,7 +778,7 @@ export default function SubmitAsnPage() {
           </div>
           <button
             className={btnDark}
-            disabled={pending || missingRequired || isSchedulePrefillLocked}
+            disabled={pending || missingRequired || isSchedulePrefillLocked || asnAlreadySent}
             onClick={onSubmit}
           >
             {pending ? "Submitting..." : "Submit ASN"}

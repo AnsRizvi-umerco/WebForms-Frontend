@@ -9,6 +9,8 @@ import { apiRoutes, http, withQuery } from "@/api";
 import { extractApiError } from "@/lib/api-error";
 import { SupplierScopeFilter } from "@/components/integrations/SupplierScopeFilter";
 import { useAdminSupplierFilter } from "@/hooks/useAdminSupplierFilter";
+import { usePortalRole } from "@/hooks/usePortalRole";
+import { paths } from "@/paths";
 
 type Direction = "IN" | "OUT";
 type DocStatus = "Accepted" | "Rejected" | "In process";
@@ -59,7 +61,16 @@ function csvEscape(value: string): string {
   return value;
 }
 
+function scheduleHrefFromRow(row: TxRow): string | null {
+  if (row.href) return row.href;
+  if (row.dir !== "IN") return null;
+  const scheduleId = row.id.startsWith("IN-") ? row.id.slice(3) : "";
+  if (!scheduleId) return null;
+  return `${paths.schedules}?schedule=${encodeURIComponent(scheduleId)}`;
+}
+
 export default function TransactionsPage() {
+  const { isPartnerAdmin: isAdminViewer } = usePortalRole();
   const { isPartnerAdmin, supplierId, setSupplierId, suppliers, suppliersLoading } =
     useAdminSupplierFilter();
   const [filter, setFilter] = useState("");
@@ -277,7 +288,9 @@ export default function TransactionsPage() {
                 <TableRowsLoader colSpan={columnCount} message="Loading transactions…" />
               ) : null}
               {!loading
-                ? pagedRows.map((row) => (
+                ? pagedRows.map((row) => {
+                    const poHref = isAdminViewer ? null : scheduleHrefFromRow(row);
+                    return (
                 <tr key={row.id} className="hover:bg-umerco-beige/60">
                   <td className={tdBase}>
                     <span className="font-mono text-xs font-semibold text-umerco-dark">{row.dir}</span>
@@ -289,8 +302,8 @@ export default function TransactionsPage() {
                     {formatLogDate(row.date)}
                   </td>
                   <td className={`${tdBase} font-mono text-xs`}>
-                    {!isPartnerAdmin && row.href ? (
-                      <Link to={row.href} className="text-umerco-primary hover:underline">
+                    {poHref ? (
+                      <Link to={poHref} className="text-umerco-primary hover:underline">
                         {row.refNo}
                       </Link>
                     ) : (
@@ -309,7 +322,8 @@ export default function TransactionsPage() {
                     </span>
                   </td>
                 </tr>
-              ))
+                    );
+                  })
                 : null}
               {!loading && rows.length === 0 ? (
                 <tr>

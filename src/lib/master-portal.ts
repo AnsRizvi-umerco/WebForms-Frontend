@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from "@/api/config";
 import { normalizePortalAuthUser, type AuthSession } from "@/lib/auth";
 
 export function getMasterPortalBaseUrl(): string {
@@ -9,7 +10,20 @@ export function getMasterPortalBaseUrl(): string {
 }
 
 export function outboundApiUrl(companyId: string, supplierId: string): string {
-  return `${getMasterPortalBaseUrl()}/api/outbound/${companyId}/${supplierId}`;
+  return `${getApiBaseUrl()}/inbound/${companyId}/${supplierId}`;
+}
+
+function shouldReplaceStoredOutboundUrl(stored: string): boolean {
+  try {
+    const hostname = new URL(stored).hostname.toLowerCase();
+    return (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname.includes("master-portal")
+    );
+  } catch {
+    return true;
+  }
 }
 
 export function resolveOutboundApiUrl(
@@ -19,17 +33,7 @@ export function resolveOutboundApiUrl(
 ): string {
   const canonical = outboundApiUrl(companyId, supplierId);
   const stored = storedUrl?.trim();
-  if (!stored) return canonical;
-
-  try {
-    const hostname = new URL(stored).hostname;
-    if (hostname === "localhost" || hostname === "127.0.0.1") {
-      return canonical;
-    }
-  } catch {
-    return canonical;
-  }
-
+  if (!stored || shouldReplaceStoredOutboundUrl(stored)) return canonical;
   return stored;
 }
 

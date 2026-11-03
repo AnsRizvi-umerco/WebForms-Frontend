@@ -371,11 +371,11 @@ export default function InvoicePage() {
           <div className="mt-1 flex flex-wrap items-center gap-2.5">
             <h1 className="text-xl font-semibold text-umerco-dark sm:text-2xl">Submit Invoice</h1>
             <span className="rounded-full bg-umerco-primary-soft px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-umerco-primary">
-              INVOIC
+              Invoice
             </span>
           </div>
           <p className="mt-1 text-sm text-umerco-muted">
-            Prepare an INVOIC document for the buyer through IWHI integration.
+            Prepare an invoice for the buyer through IWHI integration.
           </p>
         </div>
         <span className="rounded-full bg-umerco-beige px-3 py-1 text-xs font-medium text-umerco-muted">

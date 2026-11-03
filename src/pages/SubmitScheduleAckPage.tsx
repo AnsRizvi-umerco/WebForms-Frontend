@@ -9,7 +9,7 @@ import { useToastMessage } from "@/hooks/useToastMessage";
 import { DocumentTypeGate } from "@/components/forms/DocumentTypeGate";
 import { SubmitRequestResponsePanel } from "@/components/forms/SubmitRequestResponsePanel";
 import { useDocumentSubmit } from "@/components/forms/useDocumentSubmit";
-import { todayLocalIsoDateInput, toCompactYyyymmdd } from "@/lib/dates/compact";
+import { todayLocalIsoDateInput, toCompactYyyymmdd, toDateInputValue } from "@/lib/dates/compact";
 import {
   isTestConnectionSearch,
   TEST_BUYER_NAME,
@@ -204,7 +204,7 @@ export default function ScheduleAckPage() {
                   description: matched?.description || line.description?.trim() || line.part_no,
                   qtyRequested: line.qty_required,
                   qtyAccepted: line.qty_required,
-                  promisedDate: line.deliver_by,
+                  promisedDate: toDateInputValue(line.deliver_by),
                   uom: matched?.uom || line.uom || "EA",
                   unitPrice: matched?.unitPrice || "0.00"
                 };
@@ -271,7 +271,7 @@ export default function ScheduleAckPage() {
       payload: {
         deljitReference: form.deljitReference,
         poNumber: form.poNumber.trim() || form.deljitReference,
-        ...(form.poDate.trim() ? { poDate: form.poDate.trim() } : {}),
+        ...(form.poDate.trim() ? { poDate: toCompactYyyymmdd(form.poDate) } : {}),
         responseDate: toCompactYyyymmdd(form.responseDate),
         responseCode: form.responseCode,
         scope: form.scope,
@@ -511,7 +511,7 @@ export default function ScheduleAckPage() {
             disabled={pending || missingRequired || isSchedulePrefillLocked}
             onClick={onSubmit}
           >
-            {pending ? "Submitting..." : "Submit APERAK"}
+            {pending ? "Submitting..." : "Submit Schedule Ack"}
           </button>
         </div>
         </fieldset>

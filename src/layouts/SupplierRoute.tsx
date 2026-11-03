@@ -1,4 +1,5 @@
 import { Navigate, Outlet } from "react-router-dom";
+import { PageFallback } from "@/components/umerco/PageFallback";
 import { usePortalRole } from "@/hooks/usePortalRole";
 import { paths } from "@/paths";
 
@@ -6,7 +7,7 @@ export function SupplierRoute() {
   const { canAccessShippingLabels, roleReady } = usePortalRole();
 
   if (!roleReady) {
-    return null;
+    return <PageFallback message="Loading shipping labels…" />;
   }
 
   if (!canAccessShippingLabels) {

@@ -311,6 +311,32 @@ h6 {
     color: #059669;
   }
 
+  .doc-sent-badge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 9999px;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    line-height: 1.25rem;
+  }
+
+  .doc-sent-badge-ack {
+    background-color: #eff6ff;
+    color: #2563eb;
+  }
+
+  .doc-sent-badge-asn {
+    background-color: #f5f3ff;
+    color: #6d28d9;
+  }
+
+  .doc-sent-badge-invoice {
+    background-color: #ecfdf5;
+    color: #059669;
+  }
+
   .toggle-track-on,
   button.toggle-track-on {
     background-color: #1a1d21;
@@ -529,5 +555,23 @@ h6 {
       0 1px 2px rgb(17 24 39 / 0.03),
       0 4px 16px rgb(17 24 39 / 0.05),
       0 16px 48px rgb(240 242 245 / 0.95);
+  }
+}
+
+@media print {
+  .portal-top-header,
+  #portal-sidebar,
+  .report-issue-widget {
+    display: none !important;
+  }
+
+  main {
+    padding: 0 !important;
+  }
+
+  .shipping-label {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    box-shadow: none !important;
   }
 }

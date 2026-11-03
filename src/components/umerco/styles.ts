@@ -43,9 +43,13 @@ export const alertInfo =
 
 export const docMixPieColors: Record<string, string> = {
   ORDRSP: "#2563eb",
+  "PO ACKNOWLEDGMENT": "#2563eb",
   INVOIC: "#059669",
+  INVOICE: "#059669",
   APERAK: "#d97706",
-  DESADV: "#6b7280"
+  "PO SCHEDULE": "#d97706",
+  DESADV: "#6b7280",
+  ASN: "#6b7280"
 };
 
 export const docMixPieColorFallback = "#111827";

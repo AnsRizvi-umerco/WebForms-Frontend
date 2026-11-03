@@ -1,6 +1,6 @@
 {
   "api": {
-    "baseUrl": "http://localhost:3001",
+    "baseUrl": "https://umerco-supplier-portal-services-v1.vercel.app",
     "version": "v1"
   }
 }
